@@ -31,3 +31,4 @@
 /Users/leonclaraway/Github/Bookworm/Bookworm.Api/obj/Debug/net8.0/Bookworm.Api.pdb
 /Users/leonclaraway/Github/Bookworm/Bookworm.Api/obj/Debug/net8.0/Bookworm.Api.genruntimeconfig.cache
 /Users/leonclaraway/Github/Bookworm/Bookworm.Api/obj/Debug/net8.0/ref/Bookworm.Api.dll
+/Users/leonclaraway/Github/Bookworm/Bookworm.Api/obj/Debug/net8.0/Bookworm.Api.sourcelink.json
