@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "Jnqv39op6L6ezZt8wOrZumnUExVzw1Yats39AcqtMpg=",
+  "Source": "Bookworm.Api",
+  "BasePath": "_content/Bookworm.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
