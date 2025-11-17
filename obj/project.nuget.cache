@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "6KcHosbIjFzbABwGilovAqX3kIT/fAXcILm1Lm8Cr50l0SVVRvqyM8bY97SJk65N5A9k20t5u/xnrGvxVzXfOw==",
+  "dgSpecHash": "jWKa6DLsYsiBJndqS/10wC3dU8zII0UAl46qDvBtVi8j4FJEQ4KmTW2wPRForoGuB/kVLprG82N8wJDC7Ro1mA==",
   "success": true,
-  "projectFilePath": "/Users/leonclaraway/Github/Bookworm/Bookworm.Api/Bookworm.Api.csproj",
+  "projectFilePath": "/Users/leonclaraway/Github/Bookworm/Bookworm.csproj",
   "expectedPackageFiles": [
     "/Users/leonclaraway/.nuget/packages/microsoft.aspnetcore.openapi/8.0.3/microsoft.aspnetcore.openapi.8.0.3.nupkg.sha512",
     "/Users/leonclaraway/.nuget/packages/microsoft.extensions.apidescription.server/6.0.5/microsoft.extensions.apidescription.server.6.0.5.nupkg.sha512",

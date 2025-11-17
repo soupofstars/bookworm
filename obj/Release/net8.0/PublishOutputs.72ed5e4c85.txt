@@ -1,0 +1,12 @@
+/tmp/bookworm-pub/Bookworm
+/tmp/bookworm-pub/appsettings.Development.json
+/tmp/bookworm-pub/appsettings.json
+/tmp/bookworm-pub/Bookworm.dll
+/tmp/bookworm-pub/Bookworm.deps.json
+/tmp/bookworm-pub/Bookworm.runtimeconfig.json
+/tmp/bookworm-pub/Bookworm.pdb
+/tmp/bookworm-pub/Microsoft.AspNetCore.OpenApi.dll
+/tmp/bookworm-pub/Microsoft.OpenApi.dll
+/tmp/bookworm-pub/Swashbuckle.AspNetCore.Swagger.dll
+/tmp/bookworm-pub/Swashbuckle.AspNetCore.SwaggerGen.dll
+/tmp/bookworm-pub/Swashbuckle.AspNetCore.SwaggerUI.dll

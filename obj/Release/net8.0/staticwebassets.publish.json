@@ -1,10 +1,10 @@
 {
   "Version": 1,
-  "Hash": "t1vWZ31oMjNVeHKrxtjS7iFGkiSbhHWxC3wsvH/axZ0=",
+  "Hash": "MprHkUvLN2dAL/eHcUA4BPQgS1g6Yj5Gk0YUT4xdQTw=",
   "Source": "Bookworm",
   "BasePath": "_content/Bookworm",
   "Mode": "Default",
-  "ManifestType": "Build",
+  "ManifestType": "Publish",
   "ReferencedProjectsConfiguration": [],
   "DiscoveryPatterns": [
     {

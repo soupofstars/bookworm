@@ -465,11 +465,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/leonclaraway/Github/Bookworm/Bookworm.Api/Bookworm.Api.csproj",
-      "projectName": "Bookworm.Api",
-      "projectPath": "/Users/leonclaraway/Github/Bookworm/Bookworm.Api/Bookworm.Api.csproj",
+      "projectUniqueName": "/Users/leonclaraway/Github/Bookworm/Bookworm.csproj",
+      "projectName": "Bookworm",
+      "projectPath": "/Users/leonclaraway/Github/Bookworm/Bookworm.csproj",
       "packagesPath": "/Users/leonclaraway/.nuget/packages/",
-      "outputPath": "/Users/leonclaraway/Github/Bookworm/Bookworm.Api/obj/",
+      "outputPath": "/Users/leonclaraway/Github/Bookworm/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/Users/leonclaraway/.nuget/NuGet/NuGet.Config"
