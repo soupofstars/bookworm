@@ -72,21 +72,35 @@ app.MapGet("/search", async (string query, IHttpClientFactory factory) =>
         return Results.BadRequest(new { error = "query is required" });
 
     var client = factory.CreateClient("openlibrary");
-    const string fields = "key,title,author_name,cover_i,edition_count,ratings_average,ratings_count,subject,edition_key,cover_edition_key";
-    var response = await client.GetAsync($"/search.json?q={Uri.EscapeDataString(query)}&limit=20&fields={fields}");
+    const string fields = "key,title,author_name,cover_i,edition_count,ratings_average,ratings_count,subject,edition_key,cover_edition_key,isbn,isbn_13,isbn_10";
+    var searchParams = new[] { "title", "q" };
+    List<OpenLibraryDoc> docs = new();
 
-    if (!response.IsSuccessStatusCode)
+    foreach (var param in searchParams)
     {
-        var errorText = await response.Content.ReadAsStringAsync();
-        return Results.Problem($"OpenLibrary error: {response.StatusCode} - {errorText}");
+        var response = await client.GetAsync($"/search.json?{param}={Uri.EscapeDataString(query)}&limit=20&fields={fields}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorText = await response.Content.ReadAsStringAsync();
+            return Results.Problem($"OpenLibrary error ({param}): {response.StatusCode} - {errorText}");
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<OpenLibrarySearchResponse>()
+                      ?? new OpenLibrarySearchResponse(Array.Empty<OpenLibraryDoc>());
+
+        docs = payload.Docs
+            .Where(doc => !string.IsNullOrWhiteSpace(doc.Title))
+            .Take(20)
+            .ToList();
+
+        if (docs.Count > 0 || param == "q")
+        {
+            break;
+        }
     }
 
-    var payload = await response.Content.ReadFromJsonAsync<OpenLibrarySearchResponse>()
-                  ?? new OpenLibrarySearchResponse(Array.Empty<OpenLibraryDoc>());
-
-    var books = payload.Docs
-        .Where(doc => !string.IsNullOrWhiteSpace(doc.Title))
-        .Take(20)
+    var books = docs
         .Select(doc =>
         {
             var coverUrl = doc.CoverId.HasValue
@@ -102,6 +116,10 @@ app.MapGet("/search", async (string query, IHttpClientFactory factory) =>
                 ratings_count = doc.RatingsCount,
                 users_count = doc.EditionCount,
                 author_names = doc.AuthorName ?? Array.Empty<string>(),
+                isbn13 = doc.Isbn13?.FirstOrDefault()
+                         ?? doc.Isbn?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.Replace("-", "").Length >= 13),
+                isbn10 = doc.Isbn10?.FirstOrDefault()
+                         ?? doc.Isbn?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.Replace("-", "").Length == 10),
                 cover_i = doc.CoverId,
                 edition_key = doc.EditionKey?.FirstOrDefault(),
                 cover_edition_key = doc.CoverEditionKey,
@@ -246,4 +264,13 @@ record OpenLibraryDoc
 
     [JsonPropertyName("cover_edition_key")]
     public string? CoverEditionKey { get; init; }
+
+    [JsonPropertyName("isbn")]
+    public IEnumerable<string>? Isbn { get; init; }
+
+    [JsonPropertyName("isbn_13")]
+    public IEnumerable<string>? Isbn13 { get; init; }
+
+    [JsonPropertyName("isbn_10")]
+    public IEnumerable<string>? Isbn10 { get; init; }
 }

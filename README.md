@@ -3,8 +3,8 @@ A rehash of Readarr, but making it better. Using OpenLibrary API to search at th
 
 This is by no means suitable for use yet - Written on Apple Silcone not compiled for x86
 
-Currnetly Working on:
-OpenLibrary API Calls
+Currently Working on:
+OpenLibrary API Calls and search logic
 API intergration with Hardcover.app using personal bearer tokens.
 Graphical alterations to blend with readarr
 

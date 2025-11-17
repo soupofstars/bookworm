@@ -169,6 +169,7 @@
             border: 1px solid var(--border);
             display: flex;
             gap: 0.75rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.35);
         }
         .book-cover {
             width: 70px;
@@ -192,15 +193,35 @@
             font-size: 0.8rem;
             color: var(--text-muted);
             margin-bottom: 0.4rem;
+            display: flex;
+            gap: 0.35rem;
+            flex-wrap: wrap;
+            align-items: center;
         }
         .pill {
             display: inline-block;
-            padding: 0.15rem 0.45rem;
+            padding: 0.2rem 0.6rem;
             border-radius: 999px;
-            background: var(--accent-soft);
-            color: var(--accent);
+            background: rgba(255,255,255,0.08);
+            color: var(--text-muted);
             font-size: 0.75rem;
             margin-right: 0.25rem;
+        }
+        .pill-metric {
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .pill-editions {
+            background: rgba(16,185,129,0.2);
+            color: #34d399;
+        }
+        .pill-rating {
+            background: rgba(234,179,8,0.22);
+            color: #fde047;
+        }
+        .pill-isbn {
+            background: rgba(59,130,246,0.2);
+            color: #60a5fa;
         }
         .btn {
             display: inline-block;
@@ -221,6 +242,27 @@
         .btn-ghost {
             background: transparent;
             color: var(--text-muted);
+        }
+        .book-actions {
+            margin-top: 0.6rem;
+        }
+        .btn-view {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+            text-decoration: none;
+            font-size: 0.8rem;
+            box-shadow: 0 8px 20px rgba(99,102,241,0.35);
+        }
+        .btn-view:hover {
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+        }
+        .isbn-pill-row {
+            margin-bottom: 0.35rem;
         }
 
         .hidden { display: none; }
@@ -406,7 +448,13 @@
                 const editionCount = book.edition_count ?? book.users_count ?? 0;
                 const ratingRaw = book.rating ?? book.ratings_average ?? book.average_rating;
                 const hasRating = typeof ratingRaw === 'number' && !Number.isNaN(ratingRaw);
-                const lowSignal = editionCount <= 1 && !hasRating;
+                const hasImage = Boolean(
+                    (book.image && book.image.url) ||
+                    book.coverUrl ||
+                    book.cover_i ||
+                    (Array.isArray(book.cached_contributors) && book.cached_contributors.some(c => c.image && c.image.url))
+                );
+                const lowSignal = !hasImage && editionCount <= 1 && !hasRating;
                 const titleMatches = normalized && title.includes(normalized);
 
                 if (lowSignal) {
@@ -527,15 +575,6 @@
                 : (ratingRaw || 'N/A');
             const usersCount = book.edition_count ?? book.users_count ?? book.ratings_count ?? 0;
 
-            let actionsHtml = '';
-
-            if (opts.showWanted) {
-                actionsHtml += `<button class="btn btn-wanted btn-wanted-action">Wanted</button>`;
-            }
-            if (opts.showAddToLibrary) {
-                actionsHtml += `<button class="btn btn-primary btn-addlib-action">Add to library</button>`;
-            }
-
             let detailsUrl = null;
             if (book.source === 'openlibrary') {
                 let editionKey = null;
@@ -554,7 +593,7 @@
                 detailsUrl = `https://hardcover.app/books/${book.slug || book.id}`;
             }
             const linkHtml = detailsUrl
-                ? `<a href="${detailsUrl}" target="_blank" class="btn btn-ghost" style="text-decoration:none;margin-left:0.35rem;">View</a>`
+                ? `<a href="${detailsUrl}" target="_blank" class="btn btn-view">View</a>`
                 : '';
 
             div.innerHTML = `
@@ -563,28 +602,21 @@
                     <div class="book-title">${title}</div>
                     <div class="book-author">${authorText}</div>
                     <div class="book-meta">
-                        <span class="pill">Editions: ${usersCount}</span>
-                        <span class="pill">Rating: ${rating}</span>
+                        <span class="pill pill-metric pill-editions">Editions: ${usersCount}</span>
+                        <span class="pill pill-metric pill-rating">Rating: ${rating}</span>
                     </div>
-                    ${actionsHtml} ${linkHtml}
+                    ${buildIsbnPills(book)}
+                    ${linkHtml ? `<div class="book-actions">${linkHtml}</div>` : ''}
                 </div>
             `;
 
-            const wantedBtn = div.querySelector('.btn-wanted-action');
-            if (wantedBtn) {
-                wantedBtn.addEventListener('click', () => {
-                    addToWanted(book);
-                });
-            }
-
-            const addLibBtn = div.querySelector('.btn-addlib-action');
-            if (addLibBtn) {
-                addLibBtn.addEventListener('click', () => {
-                    addToLibrary(book);
-                });
-            }
-
             return div;
+        }
+
+        function buildIsbnPills(book) {
+            const isbn = book.isbn13 || book.isbn10;
+            if (!isbn) return '';
+            return `<div class="isbn-pill-row"><span class="pill pill-isbn">ISBN: ${isbn}</span></div>`;
         }
 
         function addToWanted(book) {
