@@ -5,10 +5,13 @@
     };
 
     const sections = {
-        discover: document.getElementById('section-discover'),
+        'discover-books': document.getElementById('section-discover-books'),
+        'discover-author': document.getElementById('section-discover-author'),
+        'discover-isbn': document.getElementById('section-discover-isbn'),
         library: document.getElementById('section-library'),
         wanted: document.getElementById('section-wanted'),
-        'hardcover-wanted': document.getElementById('section-hardcover-wanted')
+        'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
+        calibre: document.getElementById('section-calibre')
     };
 
     const navLinks = document.querySelectorAll('.nav-link[data-section]');
@@ -35,10 +38,30 @@
         return `<div class="isbn-pill-row"><span class="pill pill-isbn">ISBN: ${isbn}</span></div>`;
     }
 
+    function createExpandableBlock(text, className, maxChars) {
+        const safeText = text || (className === 'book-title' ? 'Untitled' : 'Unknown author');
+        if (safeText.length <= maxChars) {
+            return `<div class="${className}">${safeText}</div>`;
+        }
+        const shortText = `${safeText.slice(0, maxChars)}…`;
+        const id = `expand-${Math.random().toString(36).slice(2, 9)}`;
+        return `
+            <div class="${className}">
+                <span class="text-collapsed" data-target="${id}">${shortText}</span>
+                <span class="text-expanded hidden" id="${id}">${safeText}</span>
+                <button class="btn-text-toggle" data-target="${id}">More</button>
+            </div>
+        `;
+    }
+
     function createBookCard(book, options) {
         const opts = Object.assign({ showWanted: false, showAddToLibrary: false }, options || {});
+        const isbnText = book.isbn13 || book.isbn10 || '';
+        const cardSpan = isbnText.length > 20 ? 2 : 1;
+
         const div = document.createElement('div');
         div.className = 'book-card';
+        div.style.setProperty('--book-card-span', cardSpan);
 
         const title = book.title || 'Untitled';
         let authorText = 'Unknown author';
@@ -55,7 +78,7 @@
         let coverUrl =
             (book.image && book.image.url) ||
             book.coverUrl ||
-            (book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg` : null);
+            (book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg` : null);
         if (!coverUrl && Array.isArray(book.cached_contributors) && book.cached_contributors.length) {
             const contributorImage = book.cached_contributors[0].image;
             if (contributorImage && contributorImage.url) {
@@ -71,10 +94,8 @@
 
         let detailsUrl = null;
         if (book.source === 'openlibrary') {
-            let editionKey = null;
             const prefer = value => Array.isArray(value) ? value[0] : value;
-            editionKey = prefer(book.cover_edition_key);
-            if (!editionKey) editionKey = prefer(book.edition_key);
+            let editionKey = prefer(book.cover_edition_key) || prefer(book.edition_key);
             if (editionKey) {
                 detailsUrl = `https://openlibrary.org/books/${editionKey}`;
             } else if (book.slug) {
@@ -95,20 +116,35 @@
             actionMarkup += `<button class="btn btn-primary btn-addlib-action">Add to library</button>`;
         }
 
+        const actionsHtml = [actionMarkup, viewLink].filter(Boolean).length
+            ? `<div class="book-actions">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
+            : '';
+
         div.innerHTML = `
-            ${coverUrl ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">` : `<div class="book-cover"></div>`}
-            <div>
-                <div class="book-title">${title}</div>
-                <div class="book-author">${authorText}</div>
-                <div class="book-meta">
+            <div class="book-media">
+                ${coverUrl ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">` : `<div class="book-cover"></div>`}
+                <div class="book-stats">
                     <span class="pill pill-metric pill-editions">Editions: ${editions}</span>
                     <span class="pill pill-metric pill-rating">Rating: ${rating}</span>
                 </div>
+            </div>
+            <div class="book-body">
+                ${createExpandableBlock(title, 'book-title', 60)}
+                ${createExpandableBlock(authorText, 'book-author', 50)}
                 ${buildIsbnPills(book)}
-                ${actionMarkup ? `<div class="book-actions">${actionMarkup}</div>` : ''}
-                ${viewLink ? `<div class="book-actions">${viewLink}</div>` : ''}
+                ${actionsHtml}
             </div>
         `;
+
+        const coverEl = div.querySelector('.book-cover');
+        if (coverEl && coverUrl) {
+        coverEl.addEventListener('click', () => openLightbox({
+            coverUrl,
+            title,
+            slug: book.slug,
+            description: book.description
+        }));
+        }
 
         const wantedBtn = div.querySelector('.btn-wanted-action');
         if (wantedBtn) {
@@ -120,7 +156,82 @@
             addLibBtn.addEventListener('click', () => addToLibrary(book));
         }
 
+        div.querySelectorAll('.btn-text-toggle').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.dataset.target;
+                const expanded = div.querySelector(`#${targetId}`);
+                const collapsed = div.querySelector(`.text-collapsed[data-target="${targetId}"]`);
+                if (!expanded || !collapsed) return;
+                const isHidden = expanded.classList.contains('hidden');
+                if (isHidden) {
+                    expanded.classList.remove('hidden');
+                    collapsed.classList.add('hidden');
+                    button.textContent = 'Less';
+                } else {
+                    expanded.classList.add('hidden');
+                    collapsed.classList.remove('hidden');
+                    button.textContent = 'More';
+                }
+            });
+        });
+
         return div;
+    }
+
+    const lightboxEl = document.getElementById('lightbox');
+    const lightboxImage = document.getElementById('lightbox-image');
+    const lightboxCaption = document.getElementById('lightbox-caption');
+    const lightboxDescription = document.getElementById('lightbox-description');
+    const lightboxClose = document.querySelector('.lightbox-close');
+
+    async function openLightbox(meta) {
+        if (!lightboxEl || !lightboxImage || !lightboxCaption) return;
+        lightboxImage.src = meta.coverUrl;
+        lightboxCaption.textContent = meta.title || '';
+        if (lightboxDescription) {
+            lightboxDescription.classList.add('hidden');
+            lightboxDescription.textContent = '';
+            const descriptionText = await resolveDescription(meta);
+            if (descriptionText) {
+                lightboxDescription.textContent = descriptionText;
+                lightboxDescription.classList.remove('hidden');
+            }
+        }
+        lightboxEl.classList.remove('hidden');
+    }
+
+    function closeLightbox() {
+        if (!lightboxEl) return;
+        lightboxEl.classList.add('hidden');
+    }
+
+    if (lightboxEl) {
+        lightboxEl.addEventListener('click', (e) => {
+            if (e.target === lightboxEl) closeLightbox();
+        });
+    }
+    if (lightboxClose) {
+        lightboxClose.addEventListener('click', closeLightbox);
+    }
+
+    async function resolveDescription(meta) {
+        if (meta.description) return normalizeDescription(meta.description);
+        if (!meta.slug || !meta.slug.startsWith('/works/')) return '';
+        try {
+            const res = await fetch(`https://openlibrary.org${meta.slug}.json`);
+            if (!res.ok) return '';
+            const data = await res.json();
+            return normalizeDescription(data.description);
+        } catch {
+            return '';
+        }
+    }
+
+    function normalizeDescription(desc) {
+        if (!desc) return '';
+        if (typeof desc === 'string') return desc.trim();
+        if (typeof desc === 'object' && desc.value) return String(desc.value).trim();
+        return '';
     }
 
     function addToWanted(book) {
@@ -179,6 +290,12 @@
         });
     }
 
+    const searchModeBySection = {
+        'discover-books': 'title',
+        'discover-author': 'author',
+        'discover-isbn': 'isbn'
+    };
+
     function showSection(sectionName) {
         navLinks.forEach(link => link.classList.remove('active'));
         if (navMap[sectionName]) {
@@ -186,12 +303,14 @@
         }
 
         Object.entries(sections).forEach(([name, el]) => {
+            if (!el) return;
             el.classList.toggle('hidden', name !== sectionName);
         });
 
-        if (sectionName === 'discover') {
+        if (searchModeBySection[sectionName]) {
             refs.topbarTitle.textContent = 'Search';
-            window.bookwormSearch && window.bookwormSearch.restore();
+            const mode = searchModeBySection[sectionName];
+            window.bookwormSearch && window.bookwormSearch.restore(mode);
         } else if (sectionName === 'library') {
             refs.topbarTitle.textContent = 'Library';
         } else if (sectionName === 'wanted') {
@@ -199,6 +318,8 @@
         } else if (sectionName === 'hardcover-wanted') {
             refs.topbarTitle.textContent = 'Hardcover.app · Want to read';
             window.bookwormHardcover && window.bookwormHardcover.ensureLoaded();
+        } else if (sectionName === 'calibre') {
+            refs.topbarTitle.textContent = 'Calibre';
         }
     }
 
