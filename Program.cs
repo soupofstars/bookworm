@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Bookworm.Data;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,6 +9,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+var connectionString = builder.Configuration.GetConnectionString("Postgres");
+if (!string.IsNullOrWhiteSpace(connectionString))
+{
+    builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
+}
+
+builder.Services.AddSingleton(sp =>
+{
+    var dataSource = sp.GetService<NpgsqlDataSource>();
+    return new WantedRepository(dataSource);
+});
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -64,6 +78,35 @@ static async Task<IResult> ForwardHardcoverError(HttpResponseMessage response, s
         detail: string.IsNullOrWhiteSpace(body) ? null : body,
         statusCode: (int)response.StatusCode);
 }
+
+// Wanted shelf endpoints (persisted in PostgreSQL)
+app.MapGet("/wanted", async (WantedRepository repo) =>
+{
+    var items = await repo.GetAllAsync();
+    return Results.Ok(new { items });
+});
+
+app.MapPost("/wanted", async (WantedRepository repo, WantedBookRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Key))
+    {
+        return Results.BadRequest(new { error = "key is required" });
+    }
+
+    await repo.UpsertAsync(request);
+    return Results.Ok(new { status = "ok" });
+});
+
+app.MapDelete("/wanted/{key}", async (WantedRepository repo, string key) =>
+{
+    if (string.IsNullOrWhiteSpace(key))
+    {
+        return Results.BadRequest(new { error = "key is required" });
+    }
+
+    await repo.DeleteAsync(key);
+    return Results.NoContent();
+});
 
 // Fuzzy book search via OpenLibrary
 app.MapGet("/search", async (string query, string? mode, IHttpClientFactory factory) =>
@@ -171,7 +214,27 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
                 rating
                 ratings_count
                 users_count
+                editions_count
+                default_physical_edition {
+                  isbn_13
+                  isbn_10
+                }
+                default_ebook_edition {
+                  isbn_13
+                  isbn_10
+                }
                 cached_contributors
+                contributions(where: { contributable_type: { _eq: ""Book"" } }) {
+                  contributable_type
+                  author {
+                    id
+                    name
+                    slug
+                  }
+                }
+                image {
+                  url
+                }
               }
             }",
         variables = new { title }
@@ -217,7 +280,27 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
                     rating
                     ratings_count
                     users_count
+                    editions_count
+                    default_physical_edition {
+                      isbn_13
+                      isbn_10
+                    }
+                    default_ebook_edition {
+                      isbn_13
+                      isbn_10
+                    }
                     cached_contributors
+                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
+                      contributable_type
+                      author {
+                        id
+                        name
+                        slug
+                      }
+                    }
+                    image {
+                      url
+                    }
                   }
                 }
               }

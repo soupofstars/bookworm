@@ -2,7 +2,7 @@
     const app = window.bookwormApp;
     if (!app) return;
 
-    const panels = document.querySelectorAll('.search-panel[data-mode="title"]');
+    const panels = document.querySelectorAll('.search-panel[data-mode="isbn"]');
     if (!panels.length) return;
 
     const states = {};
@@ -64,7 +64,7 @@
     }
 
     function attachPanel(panel) {
-        const mode = panel.dataset.mode || 'title';
+        const mode = panel.dataset.mode || 'isbn';
         const form = panel.querySelector('form');
         const input = panel.querySelector('input');
         const statusEl = panel.querySelector('.search-status');
@@ -135,15 +135,15 @@
 
     panels.forEach(attachPanel);
 
-    window.bookwormBookSearch = {
-        restore(mode = 'title') {
+    window.bookwormIsbnSearch = {
+        restore(mode = 'isbn') {
             const state = states[mode];
             if (!state) return;
             state.input.value = state.query;
             state.statusEl.textContent = state.status;
             classifyResults(state);
         },
-        search(mode = 'title', query) {
+        search(query, mode = 'isbn') {
             const state = states[mode];
             if (!state || !query) return;
             state.input.value = query;

@@ -1,7 +1,9 @@
 (function () {
     const state = {
         library: [],
-        wanted: []
+        wanted: [],
+        wantedLoading: false,
+        wantedLoaded: false
     };
 
     const sections = {
@@ -32,13 +34,17 @@
         return book.slug || book.id || book.title;
     }
 
-    function buildIsbnPills(book, options) {
-        const isbn = book.isbn13 || book.isbn10;
-        if (!isbn) return '';
-        if (options?.inline) {
-            return `ISBN: ${isbn}`;
-        }
-        return `<div class="isbn-pill-row"><span class="pill pill-isbn">ISBN: ${isbn}</span></div>`;
+    function buildIsbnText(book) {
+        return book.isbn13 || book.isbn10 || 'N/A';
+    }
+
+    function renderPills(pills) {
+        return pills.map(pill => `
+            <div class="book-pill">
+                <div class="book-pill-label">${pill.label}</div>
+                <div class="book-pill-value">${pill.value}</div>
+            </div>
+        `).join('');
     }
 
     function createExpandableBlock(text, className, maxChars) {
@@ -92,7 +98,7 @@
         const rating = typeof ratingRaw === 'number'
             ? Math.round(ratingRaw * 10) / 10
             : (ratingRaw || 'N/A');
-        const editions = book.edition_count ?? book.users_count ?? book.ratings_count ?? 0;
+        const editions = book.editions_count ?? book.edition_count ?? book.users_count ?? book.ratings_count ?? 0;
 
         let detailsUrl = null;
         if (book.source === 'openlibrary') {
@@ -107,7 +113,7 @@
             detailsUrl = `https://hardcover.app/books/${book.slug || book.id}`;
         }
         const viewLink = detailsUrl
-            ? `<a href="${detailsUrl}" target="_blank" class="btn btn-view">View</a>`
+            ? `<a href="${detailsUrl}" target="_blank" class="btn btn-view">View more</a>`
             : '';
 
         let actionMarkup = '';
@@ -118,33 +124,62 @@
             actionMarkup += `<button class="btn btn-primary btn-addlib-action">Add to library</button>`;
         }
 
+        const leftPills = [
+            { label: 'Editions:', value: editions },
+            { label: 'Rating:', value: rating }
+        ];
+
+        const isbnDisplay = buildIsbnText(book);
+        const isbnValue = isbnDisplay && isbnDisplay !== 'N/A'
+            ? `<button class="isbn-link" data-isbn="${isbnDisplay.replace(/"/g, '&quot;')}">${isbnDisplay}</button>`
+            : isbnDisplay;
+
+        const rightPills = [
+            { label: 'ISBN:', value: isbnValue }
+        ];
+
         const actionsHtml = [actionMarkup, viewLink].filter(Boolean).length
-            ? `<div class="book-actions bottom-right">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
+            ? `<div class="book-actions book-pill">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
             : '';
 
         const coverElement = coverUrl
             ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">`
             : `<div class="book-cover book-cover--placeholder">No Image Available</div>`;
 
-        div.innerHTML = `
-            <div class="book-media">
-                ${coverElement}
-                <div class="book-stats">
-                    <span class="pill pill-metric pill-editions">Editions: ${editions}</span>
-                    <span class="pill pill-metric pill-rating">Rating: ${rating}</span>
-                </div>
-            </div>
-            <div class="book-body">
+        const titleBlock = `
+            <div class="book-info-group">
+                <div class="book-info-label">Title</div>
                 ${createExpandableBlock(title, 'book-title', 60)}
-                ${renderAuthorLinks(authorNames)}
-                <div class="book-footer">
-                    <div class="book-sidebar">
-                        <div class="isbn-inline">${buildIsbnPills(book, { inline: true })}</div>
-                        ${actionsHtml}
-                    </div>
-                </div>
             </div>
         `;
+
+        const authorsBlock = `
+            <div class="book-info-group">
+                <div class="book-info-label">Authors</div>
+                ${renderAuthorLinks(authorNames)}
+            </div>
+        `;
+
+div.innerHTML = `
+    <div class="book-media">
+        ${coverElement}
+    </div>
+
+    <div class="book-body">
+        ${titleBlock}
+        ${authorsBlock}
+    </div>
+
+    <div class="book-meta-row">
+        <div class="book-column">
+            ${renderPills(leftPills)}
+        </div>
+        <div class="book-column">
+            ${renderPills(rightPills)}
+            ${actionsHtml}
+        </div>
+    </div>
+`;
 
         const coverEl = div.querySelector('.book-cover');
         if (coverEl && coverUrl) {
@@ -216,21 +251,21 @@
             });
         });
 
-        div.querySelectorAll('.author-more-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const targetId = btn.dataset.target;
-                const extra = div.querySelector(`#${targetId}`);
-                if (!extra) return;
-                const isHidden = extra.classList.contains('hidden');
-                if (isHidden) {
-                    extra.classList.remove('hidden');
-                    btn.textContent = 'Less';
-                } else {
-                    extra.classList.add('hidden');
-                    btn.textContent = 'More';
+        const isbnLink = div.querySelector('.isbn-link');
+        if (isbnLink) {
+            isbnLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const isbn = isbnLink.dataset.isbn;
+                if (!isbn) return;
+                if (window.bookwormApp && window.bookwormApp.showSection) {
+                    window.bookwormApp.showSection('discover-isbn');
+                }
+                if (window.bookwormIsbnSearch && window.bookwormIsbnSearch.search) {
+                    window.bookwormIsbnSearch.search(isbn);
                 }
             });
-        });
+        }
 
         return div;
     }
@@ -291,12 +326,72 @@
         return '';
     }
 
+    async function saveWantedRemote(key, book) {
+        try {
+            const res = await fetch('/wanted', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key, book })
+            });
+            if (!res.ok) {
+                const detail = await res.text().catch(() => '');
+                throw new Error(detail || 'Failed to save wanted book.');
+            }
+        } catch (err) {
+            throw err;
+        }
+    }
+
+    async function deleteWantedRemote(key) {
+        try {
+            const res = await fetch(`/wanted/${encodeURIComponent(key)}`, { method: 'DELETE' });
+            if (!res.ok && res.status !== 404) {
+                const detail = await res.text().catch(() => '');
+                throw new Error(detail || 'Failed to delete wanted book.');
+            }
+        } catch (err) {
+            throw err;
+        }
+    }
+
+    async function loadWantedFromServer() {
+        state.wantedLoading = true;
+        renderWanted();
+        try {
+            const res = await fetch('/wanted');
+            if (!res.ok) {
+                throw new Error(`Fetch failed (${res.status})`);
+            }
+            const data = await res.json();
+            const items = Array.isArray(data?.items) ? data.items : [];
+            state.wanted = items
+                .map(item => item?.book)
+                .filter(Boolean);
+            state.wantedLoaded = true;
+            state.wantedLoading = false;
+            renderWanted();
+        } catch (err) {
+            console.error('Failed to load wanted books', err);
+            state.wantedLoading = false;
+            refs.wantedStatus.textContent = 'Unable to load wanted books.';
+        }
+    }
+
     function addToWanted(book) {
         const key = bookKey(book);
         if (!state.wanted.some(b => bookKey(b) === key)) {
             state.wanted.push(book);
             renderWanted();
             refs.wantedStatus.textContent = 'Book added to Wanted.';
+            saveWantedRemote(key, book).catch(err => {
+                console.error(err);
+                refs.wantedStatus.textContent = 'Unable to save wanted book.';
+                const idx = state.wanted.findIndex(b => bookKey(b) === key);
+                if (idx !== -1) {
+                    state.wanted.splice(idx, 1);
+                    renderWanted();
+                }
+            });
         } else {
             refs.wantedStatus.textContent = 'Already in Wanted.';
         }
@@ -307,15 +402,18 @@
         if (!state.library.some(b => bookKey(b) === key)) {
             state.library.push(book);
             renderLibrary();
-            refs.libraryStatus.textContent = 'Book added to your library.';
+            refs.libraryStatus.textContent = 'Book added to your bookshelf.';
         } else {
-            refs.libraryStatus.textContent = 'Already in your library.';
+            refs.libraryStatus.textContent = 'Already on your bookshelf.';
         }
 
         const idx = state.wanted.findIndex(b => bookKey(b) === key);
         if (idx !== -1) {
             state.wanted.splice(idx, 1);
             renderWanted();
+            deleteWantedRemote(key).catch(err => {
+                console.error('Failed to delete wanted book', err);
+            });
         }
     }
 
@@ -323,11 +421,11 @@
         const { libraryStatus, libraryResults } = refs;
         libraryResults.innerHTML = '';
         if (!state.library.length) {
-            libraryStatus.textContent = 'No books in your library yet.';
+            libraryStatus.textContent = 'No books on your bookshelf yet.';
             return;
         }
 
-        libraryStatus.textContent = `You have ${state.library.length} book(s) in your library.`;
+        libraryStatus.textContent = `You have ${state.library.length} book(s) on your bookshelf.`;
         state.library.forEach(book => {
             libraryResults.appendChild(createBookCard(book, { showWanted: false, showAddToLibrary: false }));
         });
@@ -336,8 +434,15 @@
     function renderWanted() {
         const { wantedStatus, wantedResults } = refs;
         wantedResults.innerHTML = '';
+        if (state.wantedLoading && !state.wantedLoaded) {
+            wantedStatus.textContent = 'Loading wanted books...';
+            return;
+        }
+
         if (!state.wanted.length) {
-            wantedStatus.textContent = 'No wanted books yet.';
+            wantedStatus.textContent = state.wantedLoaded
+                ? 'No wanted books yet.'
+                : 'No wanted books yet.';
             return;
         }
 
@@ -369,11 +474,13 @@
             const mode = searchModeBySection[sectionName];
             if (mode === 'author') {
                 window.bookwormAuthorSearch && window.bookwormAuthorSearch.restore();
+            } else if (mode === 'isbn') {
+                window.bookwormIsbnSearch && window.bookwormIsbnSearch.restore();
             } else {
                 window.bookwormBookSearch && window.bookwormBookSearch.restore(mode);
             }
         } else if (sectionName === 'library') {
-            refs.topbarTitle.textContent = 'Library';
+            refs.topbarTitle.textContent = 'Bookshelf';
         } else if (sectionName === 'wanted') {
             refs.topbarTitle.textContent = 'Wanted';
         } else if (sectionName === 'hardcover-wanted') {
@@ -392,6 +499,7 @@
     });
 
     showSection('library');
+    loadWantedFromServer();
 
     window.bookwormApp = {
         state,

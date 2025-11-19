@@ -173,24 +173,22 @@ body {
     margin-top: 0.4rem;
 }
 .book-card {
+    /* 🔹 original “card” look */
     background: var(--bg-elevated);
     border-radius: 12px;
     padding: 0.9rem;
     border: 1px solid var(--border);
-    display: flex;
-    gap: 1rem;
     box-shadow: 0 10px 25px rgba(0,0,0,0.35);
-    align-items: flex-start;
     min-width: 320px;
     grid-column: span var(--book-card-span, 1);
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    column-gap: 1.2rem;
+    align-items: start;
 }
 .book-media {
-    flex: 0 0 150px;
-    width: 150px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    align-items: center;
+    grid-column: 1;
+    grid-row: 1 / span 2;   /* runs down the left side */
 }
 .book-cover {
     width: 100%;
@@ -214,20 +212,91 @@ body {
     font-size: 0.85rem;
     font-weight: 500;
 }
-.book-stats {
+.book-meta-row {
+    grid-column: 1 / -1;              /* span both columns */
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+}
+
+.book-column {
+    display: contents;
+}
+
+.book-pill {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 0.45rem 0.7rem;
+    display: flex;
+    flex-direction: row;          /* ⬅ horizontal */
+    align-items: center;          /* vertical alignment */
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.book-pill-label {
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: #d1d5db;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.book-pill-value {
+    font-size: 0.72rem;
+    color: #f9fafb;
+}
+.book-actions.book-pill {
+    padding: 0.45rem 0.7rem;   /* same as .book-pill */
+    margin-top: 0;             /* remove the extra top spacing */
+}
+.book-actions.book-pill .btn-view {
+    padding: 0;                /* remove inner padding that was making it taller */
+    background: transparent;
+    box-shadow: none;
+    border-radius: inherit;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.book-body {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;   /* ⬅ anchor title + authors at the top */
+    align-items: flex-start;
+    gap: 0.25rem;                  /* tighten the space between title & author */
+    padding: 0.25rem 0.4rem 0;     /* small top padding, no extra bottom */
+    margin: 0;
+}
+
+/* All normal body content stays in the right column */
+.book-body > * {
+    grid-column: 2;
+}
+
+.book-info-group {
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
 }
-.book-body {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    padding: 0.25rem 0.4rem;
-    min-width: 0;
+
+.book-info-group + .book-info-group {
+    margin-top: 0.4rem;
 }
+
+.book-info-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #c8b3b3;
+}
+
 .book-title {
     font-size: 1rem;
     font-weight: 600;
@@ -238,6 +307,12 @@ body {
     font-size: 0.85rem;
     color: var(--text-muted);
     overflow-wrap: anywhere;
+}
+.book-footer {
+    margin: 0;   
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 .book-author-links {
     font-size: 0.85rem;
@@ -251,15 +326,17 @@ body {
     align-items: center;
     gap: 0.1rem;
 }
-.author-link {
+.author-link,
+.isbn-link {
     background: none;
     border: none;
-    color: #b3bbc1;
+    color: #ffffff;
     font-size: 0.85rem;
     cursor: pointer;
     padding: 0;
 }
-.author-link:hover {
+.author-link:hover,
+.isbn-link:hover {
     text-decoration: underline;
 }
 .author-more {
@@ -276,10 +353,9 @@ body {
     display: inline-block;
     padding: 0.2rem 0.6rem;
     border-radius: 999px;
-    background: rgba(255,255,255,0.08);
-    color: var(--text-muted);
+    background: rgba(245, 252, 255, 0.08);
+    color: #ffffff;
     font-size: 0.75rem;
-    margin-right: 0.25rem;
 }
 .pill-metric {
     font-weight: 600;
@@ -292,6 +368,15 @@ body {
 .pill-rating {
     background: rgba(237, 238, 238, 0.22);
     color: #ffffff;
+}
+.pill-isbn-inline {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.08);
+    border-radius: 999px;
+    padding: 0.2rem 0.75rem;
+    display: inline-flex;
+    align-items: center;
 }
 .btn-text-toggle {
     background: none;
@@ -420,7 +505,7 @@ body {
     gap: 0.3rem;
     padding: 0.4rem 0.9rem;
     border-radius: 999px;
-    background: #2a4b60;
+    background: #303d45;
     color: #ffffff;
     text-decoration: none;
     font-size: 0.8rem;
@@ -433,3 +518,6 @@ body {
 }
 
 .hidden { display: none; }
+.isbn-inline {
+    display: inline-flex;
+}
