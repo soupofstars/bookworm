@@ -142,9 +142,15 @@ body {
 
 .results-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 0.9rem;
     align-items: stretch;
+}
+
+@media (min-width: 1600px) {
+    .results-grid {
+        grid-template-columns: repeat(5, minmax(260px, 1fr));
+    }
 }
 .search-panel {
     border: 1px solid var(--border);
@@ -172,10 +178,10 @@ body {
     padding: 0.9rem;
     border: 1px solid var(--border);
     display: flex;
-    gap: 0.9rem;
+    gap: 1rem;
     box-shadow: 0 10px 25px rgba(0,0,0,0.35);
     align-items: flex-start;
-    min-width: 260px;
+    min-width: 320px;
     grid-column: span var(--book-card-span, 1);
 }
 .book-media {
@@ -192,11 +198,21 @@ body {
     height: auto;
     border-radius: 16px;
     object-fit: cover;
-    background: linear-gradient(135deg, #1f2937, #111827);
+    background: rgb(10, 20, 22);
     padding: 12px;
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 16px 26px rgba(0,0,0,0.45);
     cursor: zoom-in;
+    cursor: pointer;
+}
+.book-cover--placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: rgba(255,255,255,0.7);
+    font-size: 0.85rem;
+    font-weight: 500;
 }
 .book-stats {
     width: 100%;
@@ -223,6 +239,39 @@ body {
     color: var(--text-muted);
     overflow-wrap: anywhere;
 }
+.book-author-links {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.author-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+}
+.author-link {
+    background: none;
+    border: none;
+    color: #b3bbc1;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0;
+}
+.author-link:hover {
+    text-decoration: underline;
+}
+.author-more {
+    display: inline-flex;
+    align-items: center;
+}
+.author-extra {
+    display: inline;
+}
+.author-sep {
+    color: var(--text-muted);
+}
 .pill {
     display: inline-block;
     padding: 0.2rem 0.6rem;
@@ -237,12 +286,12 @@ body {
     letter-spacing: 0.02em;
 }
 .pill-editions {
-    background: rgba(16,185,129,0.2);
-    color: #34d399;
+    background: rgba(163, 203, 203, 0.22);
+    color: #ffffff;
 }
 .pill-rating {
-    background: rgba(234,179,8,0.22);
-    color: #fde047;
+    background: rgba(237, 238, 238, 0.22);
+    color: #ffffff;
 }
 .btn-text-toggle {
     background: none;
@@ -339,7 +388,7 @@ body {
 }
 .pill-isbn {
     background: rgba(59,130,246,0.2);
-    color: #60a5fa;
+    color: #ffffff;
 }
 .btn {
     display: inline-block;
@@ -354,8 +403,9 @@ body {
     color: var(--accent);
 }
 .btn-primary {
-    background: var(--accent);
-    color: white;
+    background: linear-gradient(135deg, #4f46e5, #8b5cf6);
+    color: #f8fafc;
+    box-shadow: 0 8px 18px rgba(79,70,229,0.35);
 }
 .btn-ghost {
     background: transparent;
@@ -370,14 +420,13 @@ body {
     gap: 0.3rem;
     padding: 0.4rem 0.9rem;
     border-radius: 999px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    color: #fff;
+    background: #2a4b60;
+    color: #ffffff;
     text-decoration: none;
     font-size: 0.8rem;
-    box-shadow: 0 8px 20px rgba(99,102,241,0.35);
 }
 .btn-view:hover {
-    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    background: #1d3341;
 }
 .isbn-pill-row {
     margin-bottom: 0.35rem;

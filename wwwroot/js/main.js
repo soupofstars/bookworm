@@ -32,9 +32,12 @@
         return book.slug || book.id || book.title;
     }
 
-    function buildIsbnPills(book) {
+    function buildIsbnPills(book, options) {
         const isbn = book.isbn13 || book.isbn10;
         if (!isbn) return '';
+        if (options?.inline) {
+            return `ISBN: ${isbn}`;
+        }
         return `<div class="isbn-pill-row"><span class="pill pill-isbn">ISBN: ${isbn}</span></div>`;
     }
 
@@ -64,16 +67,15 @@
         div.style.setProperty('--book-card-span', cardSpan);
 
         const title = book.title || 'Untitled';
-        let authorText = 'Unknown author';
-        if (Array.isArray(book.author_names) && book.author_names.length) {
-            authorText = book.author_names.join(', ');
-        } else if (Array.isArray(book.authors) && book.authors.length) {
-            authorText = book.authors.join(', ');
-        } else if (book.author) {
-            authorText = book.author;
-        } else if (Array.isArray(book.cached_contributors) && book.cached_contributors.length) {
-            authorText = book.cached_contributors[0].name || authorText;
-        }
+        const authorNames = (() => {
+            if (Array.isArray(book.author_names) && book.author_names.length) return book.author_names;
+            if (Array.isArray(book.authors) && book.authors.length) return book.authors;
+            if (book.author) return [book.author];
+            if (Array.isArray(book.cached_contributors) && book.cached_contributors.length) {
+                return [book.cached_contributors[0].name].filter(Boolean);
+            }
+            return [];
+        })();
 
         let coverUrl =
             (book.image && book.image.url) ||
@@ -117,12 +119,16 @@
         }
 
         const actionsHtml = [actionMarkup, viewLink].filter(Boolean).length
-            ? `<div class="book-actions">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
+            ? `<div class="book-actions bottom-right">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
             : '';
+
+        const coverElement = coverUrl
+            ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">`
+            : `<div class="book-cover book-cover--placeholder">No Image Available</div>`;
 
         div.innerHTML = `
             <div class="book-media">
-                ${coverUrl ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">` : `<div class="book-cover"></div>`}
+                ${coverElement}
                 <div class="book-stats">
                     <span class="pill pill-metric pill-editions">Editions: ${editions}</span>
                     <span class="pill pill-metric pill-rating">Rating: ${rating}</span>
@@ -130,20 +136,24 @@
             </div>
             <div class="book-body">
                 ${createExpandableBlock(title, 'book-title', 60)}
-                ${createExpandableBlock(authorText, 'book-author', 50)}
-                ${buildIsbnPills(book)}
-                ${actionsHtml}
+                ${renderAuthorLinks(authorNames)}
+                <div class="book-footer">
+                    <div class="book-sidebar">
+                        <div class="isbn-inline">${buildIsbnPills(book, { inline: true })}</div>
+                        ${actionsHtml}
+                    </div>
+                </div>
             </div>
         `;
 
         const coverEl = div.querySelector('.book-cover');
         if (coverEl && coverUrl) {
-        coverEl.addEventListener('click', () => openLightbox({
-            coverUrl,
-            title,
-            slug: book.slug,
-            description: book.description
-        }));
+            coverEl.addEventListener('click', () => openLightbox({
+                coverUrl,
+                title,
+                slug: book.slug,
+                description: book.description
+            }));
         }
 
         const wantedBtn = div.querySelector('.btn-wanted-action');
@@ -155,6 +165,22 @@
         if (addLibBtn) {
             addLibBtn.addEventListener('click', () => addToLibrary(book));
         }
+
+        div.querySelectorAll('.btn-text-toggle.author-more-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetId = btn.dataset.target;
+                const extra = div.querySelector(`#${targetId}`);
+                if (!extra) return;
+                const isHidden = extra.classList.contains('hidden');
+                if (isHidden) {
+                    extra.classList.remove('hidden');
+                    btn.textContent = 'Less';
+                } else {
+                    extra.classList.add('hidden');
+                    btn.textContent = 'More';
+                }
+            });
+        });
 
         div.querySelectorAll('.btn-text-toggle').forEach(button => {
             button.addEventListener('click', () => {
@@ -171,6 +197,37 @@
                     expanded.classList.add('hidden');
                     collapsed.classList.remove('hidden');
                     button.textContent = 'More';
+                }
+            });
+        });
+
+        div.querySelectorAll('.author-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const name = link.dataset.author;
+                if (!name) return;
+                if (window.bookwormApp && window.bookwormApp.showSection) {
+                    window.bookwormApp.showSection('discover-author');
+                }
+                if (window.bookwormAuthorSearch && window.bookwormAuthorSearch.search) {
+                    window.bookwormAuthorSearch.search(name);
+                }
+            });
+        });
+
+        div.querySelectorAll('.author-more-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetId = btn.dataset.target;
+                const extra = div.querySelector(`#${targetId}`);
+                if (!extra) return;
+                const isHidden = extra.classList.contains('hidden');
+                if (isHidden) {
+                    extra.classList.remove('hidden');
+                    btn.textContent = 'Less';
+                } else {
+                    extra.classList.add('hidden');
+                    btn.textContent = 'More';
                 }
             });
         });
@@ -310,7 +367,11 @@
         if (searchModeBySection[sectionName]) {
             refs.topbarTitle.textContent = 'Search';
             const mode = searchModeBySection[sectionName];
-            window.bookwormSearch && window.bookwormSearch.restore(mode);
+            if (mode === 'author') {
+                window.bookwormAuthorSearch && window.bookwormAuthorSearch.restore();
+            } else {
+                window.bookwormBookSearch && window.bookwormBookSearch.restore(mode);
+            }
         } else if (sectionName === 'library') {
             refs.topbarTitle.textContent = 'Library';
         } else if (sectionName === 'wanted') {
@@ -338,6 +399,38 @@
         addToLibrary,
         addToWanted,
         renderLibrary,
-        renderWanted
+        renderWanted,
+        showSection
     };
 })();
+    function renderAuthorLinks(names) {
+        if (!names.length) {
+            return `<div class="book-author">Unknown author</div>`;
+        }
+        const maxPreview = 4;
+        const preview = names.slice(0, maxPreview);
+        const hasMore = names.length > maxPreview;
+
+        const renderChip = (name, idx, includeSep = true) => {
+            const safeAttr = name.replace(/"/g, '&quot;');
+            const sep = includeSep && idx < preview.length - 1 ? '<span class="author-sep">, </span>' : '';
+            return `<span class="author-chip"><button class="author-link" data-author="${safeAttr}">${name}</button>${sep}</span>`;
+        };
+
+        let html = preview.map((name, idx) => renderChip(name, idx)).join('');
+
+        if (hasMore) {
+            const hiddenList = names.slice(maxPreview).map((name, idx) => renderChip(name, idx, idx < names.length - maxPreview - 1)).join('');
+            const listId = `author-extra-${Math.random().toString(36).slice(2, 9)}`;
+            html += `
+                <span class="author-more">
+                    <button class="btn-text-toggle author-more-btn" data-target="${listId}">More</button>
+                </span>
+                <span id="${listId}" class="author-extra hidden">
+                    ${hiddenList}
+                </span>
+            `;
+        }
+
+        return `<div class="book-author-links">${html}</div>`;
+    }

@@ -66,14 +66,20 @@ static async Task<IResult> ForwardHardcoverError(HttpResponseMessage response, s
 }
 
 // Fuzzy book search via OpenLibrary
-app.MapGet("/search", async (string query, IHttpClientFactory factory) =>
+app.MapGet("/search", async (string query, string? mode, IHttpClientFactory factory) =>
 {
     if (string.IsNullOrWhiteSpace(query))
         return Results.BadRequest(new { error = "query is required" });
 
     var client = factory.CreateClient("openlibrary");
     const string fields = "key,title,author_name,cover_i,edition_count,ratings_average,ratings_count,subject,edition_key,cover_edition_key,isbn,isbn_13,isbn_10";
-    var searchParams = new[] { "title", "q" };
+    var normalizedMode = (mode ?? "title").Trim().ToLowerInvariant();
+    var searchParams = normalizedMode switch
+    {
+        "author" => new[] { "author", "q" },
+        "isbn" => new[] { "isbn", "title", "q" },
+        _ => new[] { "title", "q" }
+    };
     List<OpenLibraryDoc> docs = new();
 
     foreach (var param in searchParams)

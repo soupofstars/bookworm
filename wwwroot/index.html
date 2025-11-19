@@ -11,8 +11,14 @@
 
         <div class="nav-section">
             <div class="nav-section-title">Discover</div>
-            <div class="nav-link" data-section="discover">
-                <span class="nav-dot"></span> Search
+            <div class="nav-link" data-section="discover-books">
+                <span class="nav-dot"></span> Search books
+            </div>
+            <div class="nav-link" data-section="discover-author">
+                <span class="nav-dot"></span> Search authors
+            </div>
+            <div class="nav-link" data-section="discover-isbn">
+                <span class="nav-dot"></span> Search ISBN
             </div>
         </div>
 
@@ -23,6 +29,13 @@
             </div>
             <div class="nav-link" data-section="wanted">
                 <span class="nav-dot"></span> Wanted
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-section-title">Calibre</div>
+            <div class="nav-link" data-section="calibre">
+                <span class="nav-dot"></span> Calibre library
             </div>
         </div>
 
@@ -46,22 +59,64 @@
         </header>
 
         <section class="content">
-            <!-- Discover -->
-            <div id="section-discover" class="hidden">
+            <!-- Discover: Books -->
+            <div id="section-discover-books" class="hidden">
                 <div class="content-header">
                     <div>
                         <h1>Search books</h1>
-                        <p>Search by book title (e.g. “The Hobbit”). Use Search by author or ISBN in the menu bar to get better results, rather than attempting it here.</p>
+                        <p>Search by title (e.g. “The Hobbit”). Use the author or ISBN tabs for other queries.</p>
                     </div>
                 </div>
 
-                <form id="search-form" class="search-bar">
-                    <input id="query" type="text" placeholder="e.g. The Hobbit" />
-                    <button type="submit">Search</button>
-                </form>
+                <div class="search-panel" data-mode="title">
+                    <form class="search-bar">
+                        <input type="text" placeholder="e.g. The Hobbit" />
+                        <button type="submit">Search</button>
+                    </form>
 
-                    <div id="status" class="status">Ready.</div>
-                    <div id="results"></div>
+                    <div class="status search-status">Ready.</div>
+                    <div class="search-results"></div>
+                </div>
+            </div>
+
+            <!-- Discover: Author -->
+            <div id="section-discover-author" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Search authors</h1>
+                        <p>Find works by author name (e.g. “J.R.R. Tolkien”).</p>
+                    </div>
+                </div>
+
+                <div class="search-panel" data-mode="author">
+                    <form class="search-bar">
+                        <input type="text" placeholder="e.g. Brandon Sanderson" />
+                        <button type="submit">Search</button>
+                    </form>
+
+                    <div class="status search-status">Ready.</div>
+                    <div class="search-results"></div>
+                </div>
+            </div>
+
+            <!-- Discover: ISBN -->
+            <div id="section-discover-isbn" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Search ISBN</h1>
+                        <p>Lookup a book by ISBN-13 or ISBN-10.</p>
+                    </div>
+                </div>
+
+                <div class="search-panel" data-mode="isbn">
+                    <form class="search-bar">
+                        <input type="text" placeholder="e.g. 9780547928227" />
+                        <button type="submit">Search</button>
+                    </form>
+
+                    <div class="status search-status">Ready.</div>
+                    <div class="search-results"></div>
+                </div>
             </div>
 
             <!-- Library -->
@@ -103,12 +158,38 @@
                 <div id="hardcover-wanted-status" class="status">Loading from Hardcover…</div>
                 <div id="hardcover-wanted-results" class="results-grid"></div>
             </div>
+
+            <!-- Calibre -->
+            <div id="section-calibre" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Calibre</h1>
+                        <p>Calibre-specific library information will live here.</p>
+                    </div>
+                </div>
+
+                <div class="status">Calibre integration coming soon.</div>
+            </div>
         </section>
     </main>
 
+    <div id="lightbox" class="lightbox hidden">
+        <div class="lightbox-content">
+            <button class="lightbox-close" aria-label="Close">×</button>
+            <div class="lightbox-body">
+                <img id="lightbox-image" alt="Expanded cover" />
+                <div class="lightbox-info">
+                    <div id="lightbox-caption" class="lightbox-caption"></div>
+                    <div id="lightbox-description" class="lightbox-description hidden"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+ 
     
     <script src="js/main.js"></script>
-    <script src="js/search.js"></script>
+    <script src="js/search-books.js"></script>
+    <script src="js/search-authors.js"></script>
     <script src="js/hardcover.js"></script>
 </body>
 </html>
