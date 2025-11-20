@@ -15,15 +15,17 @@
 - **Modern UI** with card layout, hoverable covers, lightbox previews, and expandable author chips linking to the in-app author search.
 - **Calibre placeholder** ready for future integrations.
 
-## 🚀 Getting Started
-
-```bash
-git clone https://github.com/your-user/bookworm.git
-cd Bookworm
-dotnet run --project Bookworm.csproj
-```
 
 Open your browser at `http://localhost:5099`.
+
+### Calibre metadata (SQLite)
+
+Bookworm can read directly from Calibre’s `metadata.db` (a SQLite database). Point the app at that file by editing `Calibre:DatabasePath`.
+
+- Local dev: set the absolute path, e.g. `/Users/you/Calibre Library/metadata.db`.
+- Docker: bind-mount the folder and point the env var at the mounted location (see the example below). Without the volume mount, the container cannot see your host’s SQLite database.
+- After configuring the path, open the Calibre tab and click **Sync Calibre** to mirror the library into Bookworm’s local database.
+- Currently tested with version 8.4.0
 
 ### Docker
 
@@ -32,7 +34,11 @@ docker run -d \
   --name bookworm \
   -p 8787:8080 \
   -e Hardcover__ApiKey="YOUR_REAL_HARDCOVER_API_KEY" \
-  ghcr.io/your-user/bookworm:latest
+  -v ~/bookworm-data:/data \
+  -e Storage__Database='Data Source=/data/bookworm.db' \
+  -v "/Users/you/Calibre Library:/calibre" \
+  -e Calibre__DatabasePath="/calibre/metadata.db" \
+  bookworm
 ```
 
 ### Configuration
@@ -40,25 +46,15 @@ docker run -d \
 | Key | Description |
 | --- | --- |
 | `Hardcover:ApiKey` / `Hardcover__ApiKey` | Personal Hardcover token (required for Hardcover tab). |
-| `Hardcover:Endpoint` | Optional override of the GraphQL endpoint. |
+| `Calibre:DatabasePath` | Full path to your Calibre `metadata.db` for local sync. |
 
-## 🧱 Project Structure
 
-| Path | Description |
-| --- | --- |
-| `Program.cs` | Minimal API, HttpClient registration, static file hosting. |
-| `wwwroot/index.html` | SPA markup. |
-| `wwwroot/site.css` | Styling (cards, nav, lightbox). |
-| `wwwroot/js/main.js` | Shared state, card rendering, lightbox, navigation. |
-| `wwwroot/js/search-books.js` | Book + ISBN search logic. |
-| `wwwroot/js/search-authors.js` | Author search logic. |
-| `wwwroot/js/hardcover.js` | Hardcover “want to read” fetcher. |
+
 
 ## 🛣️ Roadmap
 
-- Persistent storage for Library/Wanted.
 - Calibre sync API.
-- Offline cache + multi-user auth.
+- Offline cache.
 - Automated tests / CI.
 
 ## 🤝 Contributing
