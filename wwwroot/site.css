@@ -97,6 +97,10 @@ body {
     gap: 1rem;
     margin-bottom: 1rem;
 }
+.section-actions {
+    display: flex;
+    gap: 0.5rem;
+}
 .content-header h1 {
     margin: 0;
     font-size: 1.4rem;
@@ -308,6 +312,14 @@ body {
     color: var(--text-muted);
     overflow-wrap: anywhere;
 }
+.book-isbn-label {
+    margin-top: 0.75rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #cbb6a4;
+    font-weight: 600;
+}
 .book-footer {
     margin: 0;   
     display: flex;
@@ -320,6 +332,18 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem;
+}
+.book-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+.book-tag {
+    font-size: 0.75rem;
+    padding: 0.18rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(59,130,246,0.2);
+    color: #cbd5f5;
 }
 .author-chip {
     display: inline-flex;
@@ -398,6 +422,100 @@ body {
     display: flex;
     gap: 0.4rem;
     flex-wrap: wrap;
+}
+.book-isbn-inline {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.book-source {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.settings-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    background: rgba(17,23,39,0.7);
+    margin-bottom: 1rem;
+}
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.settings-row h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+.settings-row p {
+    margin: 0.2rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+.settings-row--stacked {
+    flex-direction: column;
+    align-items: flex-start;
+}
+.settings-input-group {
+    display: flex;
+    gap: 0.5rem;
+    width: 100%;
+    margin-top: 0.5rem;
+}
+.settings-input {
+    flex: 1;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #0b1120;
+    color: var(--text);
+}
+.settings-input-group .btn {
+    white-space: nowrap;
+}
+#settings-calibre-card.hidden {
+    display: none;
+}
+.toggle {
+    position: relative;
+    width: 48px;
+    height: 26px;
+    display: inline-block;
+}
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #374151;
+    border-radius: 999px;
+    transition: background 0.2s ease;
+}
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    top: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+.toggle input:checked + .toggle-slider {
+    background: var(--accent);
+}
+.toggle input:checked + .toggle-slider::before {
+    transform: translateX(22px);
 }
 .lightbox {
     position: fixed;
@@ -519,5 +637,9 @@ body {
 
 .hidden { display: none; }
 .isbn-inline {
-    display: inline-flex;
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.02em;
 }

@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Bookworm.Data;
-using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,18 +9,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-
-var connectionString = builder.Configuration.GetConnectionString("Postgres");
-if (!string.IsNullOrWhiteSpace(connectionString))
-{
-    builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
-}
-
-builder.Services.AddSingleton(sp =>
-{
-    var dataSource = sp.GetService<NpgsqlDataSource>();
-    return new WantedRepository(dataSource);
-});
+var wantedDb = builder.Configuration["Storage:Database"] ?? "App_Data/bookworm.db";
+builder.Services.AddSingleton(new WantedRepository(wantedDb));
+builder.Services.AddSingleton(new CalibreMirrorRepository(wantedDb));
+builder.Services.AddSingleton<UserSettingsStore>();
+builder.Services.AddSingleton<CalibreRepository>();
+builder.Services.AddSingleton<CalibreCoverService>();
+builder.Services.AddSingleton<CalibreSyncService>();
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -61,6 +56,12 @@ if (app.Environment.IsDevelopment())
 // Serve static UI assets (index.html, JS, CSS) from wwwroot
 app.UseDefaultFiles();
 app.UseStaticFiles();
+var coverService = app.Services.GetRequiredService<CalibreCoverService>();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = coverService.AsFileProvider(),
+    RequestPath = coverService.RequestPath
+});
 
 // Health
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -79,7 +80,62 @@ static async Task<IResult> ForwardHardcoverError(HttpResponseMessage response, s
         statusCode: (int)response.StatusCode);
 }
 
-// Wanted shelf endpoints (persisted in PostgreSQL)
+static int ExtractAffectedRows(JsonDocument? document, string key)
+{
+    if (document is null)
+    {
+        return 0;
+    }
+
+    if (!document.RootElement.TryGetProperty("data", out var dataElement))
+    {
+        return 0;
+    }
+
+    if (!dataElement.TryGetProperty(key, out var section))
+    {
+        return 0;
+    }
+
+    if (!section.TryGetProperty("affected_rows", out var affected))
+    {
+        return 0;
+    }
+
+    return affected.GetInt32();
+}
+
+static string ExpandUserPath(string path)
+{
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        return path;
+    }
+
+    var expanded = Environment.ExpandEnvironmentVariables(path);
+    if (expanded.StartsWith("~"))
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(home))
+        {
+            home = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
+        }
+
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            var remainder = expanded.Length > 1
+                ? expanded[1..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, '/')
+                : string.Empty;
+            expanded = string.IsNullOrWhiteSpace(remainder)
+                ? home
+                : Path.Combine(home, remainder);
+        }
+    }
+
+    return expanded;
+}
+
+// Wanted shelf endpoints (persisted locally via SQLite)
 app.MapGet("/wanted", async (WantedRepository repo) =>
 {
     var items = await repo.GetAllAsync();
@@ -317,6 +373,202 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
 })
 .WithName("GetHardcoverWantToRead");
 
+app.MapGet("/calibre/books", async (CalibreMirrorRepository mirrorRepo, CalibreCoverService coverService, CancellationToken cancellationToken) =>
+{
+    IReadOnlyList<CalibreMirrorBook> books = await mirrorRepo.GetBooksAsync(200, cancellationToken);
+    var state = await mirrorRepo.GetSyncStateAsync(cancellationToken);
+
+    string? libraryRoot = null;
+    if (!string.IsNullOrWhiteSpace(state.CalibrePath))
+    {
+        try
+        {
+            var full = Path.GetFullPath(state.CalibrePath);
+            libraryRoot = Path.GetDirectoryName(full);
+        }
+        catch
+        {
+            libraryRoot = null;
+        }
+    }
+
+    if (!string.IsNullOrWhiteSpace(libraryRoot))
+    {
+        var hydrated = new List<CalibreMirrorBook>(books.Count);
+        foreach (var book in books)
+        {
+            string? coverUrl = book.CoverUrl;
+            if (book.HasCover && !coverService.CoverExists(book.Id) && !string.IsNullOrWhiteSpace(book.Path))
+            {
+                try
+                {
+                    var ensured = await coverService.EnsureCoverAsync(book.Id, libraryRoot!, book.Path, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(ensured))
+                    {
+                        coverUrl = ensured;
+                    }
+                }
+                catch
+                {
+                    // ignore and keep existing coverUrl if copy fails
+                }
+            }
+
+            hydrated.Add(ReferenceEquals(coverUrl, book.CoverUrl) ? book : book with { CoverUrl = coverUrl });
+        }
+
+        books = hydrated;
+    }
+
+    return Results.Ok(new
+    {
+        count = books.Count,
+        books,
+        lastSync = state.LastSnapshot,
+        sourcePath = state.CalibrePath
+    });
+})
+.WithName("GetCalibreBooks");
+
+app.MapPost("/calibre/sync", async (CalibreSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var result = await syncService.SyncAsync(cancellationToken);
+    if (!result.Success)
+    {
+        return Results.BadRequest(new { error = result.Error });
+    }
+
+    return Results.Ok(new { synced = result.Count, snapshot = result.Snapshot });
+})
+.WithName("SyncCalibreLibrary");
+
+app.MapGet("/settings/calibre", (UserSettingsStore store) =>
+{
+    var path = store.CalibreDatabasePath;
+    var exists = !string.IsNullOrWhiteSpace(path) && File.Exists(path);
+    return Results.Ok(new { path, exists });
+});
+
+app.MapPost("/settings/calibre", async (CalibrePathRequest request, UserSettingsStore store) =>
+{
+    var trimmed = request.Path?.Trim();
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        await store.SetCalibreDatabasePathAsync(null);
+        return Results.Ok(new { path = (string?)null, exists = false });
+    }
+
+    string fullPath;
+    try
+    {
+        var expanded = ExpandUserPath(trimmed);
+        fullPath = Path.GetFullPath(expanded);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Invalid path: {ex.Message}" });
+    }
+
+    if (!File.Exists(fullPath))
+    {
+        return Results.BadRequest(new { error = $"metadata.db not found at {fullPath}" });
+    }
+
+    await store.SetCalibreDatabasePathAsync(fullPath);
+    return Results.Ok(new { path = fullPath, exists = true });
+});
+
+app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config) =>
+{
+    if (string.IsNullOrWhiteSpace(request.BookId))
+    {
+        return Results.BadRequest(new { error = "bookId is required" });
+    }
+
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.BadRequest(new
+        {
+            error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey."
+        });
+    }
+
+    var client = factory.CreateClient("hardcover");
+
+    if (request.WantToRead)
+    {
+        const string updateMutation = @"
+            mutation SetWantToRead($bookId: uuid!) {
+              update_user_books(
+                where: { book_id: { _eq: $bookId } }
+                _set: { status_id: 1 }
+              ) {
+                affected_rows
+              }
+            }";
+
+        var updateResponse = await client.PostAsJsonAsync("", new
+        {
+            query = updateMutation,
+            variables = new { bookId = request.BookId }
+        });
+
+        if (!updateResponse.IsSuccessStatusCode)
+        {
+            return await ForwardHardcoverError(updateResponse, "want-to-read:update");
+        }
+
+        using var updateDoc = await updateResponse.Content.ReadFromJsonAsync<JsonDocument>();
+        var affected = ExtractAffectedRows(updateDoc, "update_user_books");
+
+        if (affected == 0)
+        {
+            const string insertMutation = @"
+                mutation InsertWantToRead($bookId: uuid!) {
+                  insert_user_books_one(object: { book_id: $bookId, status_id: 1 }) {
+                    status_id
+                  }
+                }";
+
+            var insertResponse = await client.PostAsJsonAsync("", new
+            {
+                query = insertMutation,
+                variables = new { bookId = request.BookId }
+            });
+
+            if (!insertResponse.IsSuccessStatusCode)
+            {
+                return await ForwardHardcoverError(insertResponse, "want-to-read:insert");
+            }
+        }
+
+        return Results.Ok(new { status = "ok" });
+    }
+
+    const string deleteMutation = @"
+        mutation RemoveWantToRead($bookId: uuid!) {
+          delete_user_books(
+            where: { book_id: { _eq: $bookId }, status_id: { _eq: 1 } }
+          ) {
+            affected_rows
+          }
+        }";
+
+    var deleteResponse = await client.PostAsJsonAsync("", new
+    {
+        query = deleteMutation,
+        variables = new { bookId = request.BookId }
+    });
+
+    if (!deleteResponse.IsSuccessStatusCode)
+    {
+        return await ForwardHardcoverError(deleteResponse, "want-to-read:remove");
+    }
+
+    return Results.Ok(new { status = "ok" });
+})
+.WithName("SetHardcoverWantStatus");
+
 app.Run();
 
 record OpenLibrarySearchResponse(
@@ -363,3 +615,10 @@ record OpenLibraryDoc
     [JsonPropertyName("isbn_10")]
     public IEnumerable<string>? Isbn10 { get; init; }
 }
+
+record HardcoverWantRequest(
+    [property: JsonPropertyName("bookId")] string BookId,
+    [property: JsonPropertyName("wantToRead")] bool WantToRead);
+
+record CalibrePathRequest(
+    [property: JsonPropertyName("path")] string? Path);
