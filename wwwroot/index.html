@@ -22,15 +22,18 @@
             </div>
         </div>
 
-        <div class="nav-section">
-            <div class="nav-section-title">Library</div>
-            <div class="nav-link active" data-section="library">
-                <span class="nav-dot"></span> Bookshelf
+            <div class="nav-section">
+                <div class="nav-section-title">Library</div>
+                <div class="nav-link active" data-section="library">
+                    <span class="nav-dot"></span> Bookshelf
+                </div>
+                <div class="nav-link" data-section="wanted">
+                    <span class="nav-dot"></span> Wanted
+                </div>
+                <div class="nav-link" data-section="suggested">
+                    <span class="nav-dot"></span> Suggested
+                </div>
             </div>
-            <div class="nav-link" data-section="wanted">
-                <span class="nav-dot"></span> Wanted
-            </div>
-        </div>
 
         <div class="nav-section">
             <div class="nav-section-title">Calibre</div>
@@ -48,7 +51,9 @@
 
         <div class="nav-section">
             <div class="nav-section-title">System</div>
-            <div class="nav-link"><span class="nav-dot"></span> Settings</div>
+            <div class="nav-link" data-section="settings">
+                <span class="nav-dot"></span> Settings
+            </div>
         </div>
     </aside>
 
@@ -166,9 +171,72 @@
                         <h1>Calibre</h1>
                         <p>Calibre-specific library information will live here.</p>
                     </div>
+                    <div class="section-actions">
+                        <button id="btn-calibre-sync" class="btn btn-primary">Sync Calibre</button>
+                    </div>
                 </div>
 
-                <div class="status">Calibre integration coming soon.</div>
+                <div id="calibre-status" class="status">Calibre integration coming soon.</div>
+                <div id="calibre-results" class="results-grid"></div>
+            </div>
+
+            <!-- Suggested (Hardcover people lists based on Calibre) -->
+            <div id="section-suggested" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Suggested</h1>
+                        <p>Recommendations sourced from Hardcover.</p>
+                    </div>
+                    <div class="section-actions">
+                        <div class="suggested-search">
+                            <input id="suggested-search-input" type="text" placeholder="Search suggested (title, author, genre)" />
+                            <button id="suggested-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
+                        <button id="btn-suggested-reload" class="btn">Reload</button>
+                    </div>
+                </div>
+
+                <div id="suggested-status" class="status">Waiting to load recommendations…</div>
+                <div id="suggested-steps" class="status status-muted hidden"></div>
+                <div id="suggested-results" class="results-grid"></div>
+            </div>
+
+            <!-- Settings -->
+            <div id="section-settings" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Settings</h1>
+                        <p>Configure integrations and sync preferences.</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-row">
+                        <div>
+                            <h2>Hardcover sync</h2>
+                            <p>Mirror Hardcover “Want to read” into your Wanted shelf and push Wanted changes back to Hardcover.</p>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-hardcover-sync" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="settings-hardcover-status" class="status">Not syncing with Hardcover.</div>
+                </div>
+
+                <div class="settings-card" id="settings-calibre-card">
+                    <div class="settings-row settings-row--stacked">
+                        <div>
+                            <h2>Calibre metadata</h2>
+                            <p>Set the path to your Calibre <code>metadata.db</code> so Bookworm can read your local library.</p>
+                        </div>
+                        <div class="settings-input-group">
+                            <input type="text" id="input-calibre-path" class="settings-input" placeholder="/path/to/Calibre Library/metadata.db" />
+                            <button id="btn-save-calibre-path" class="btn btn-primary">Save</button>
+                        </div>
+                    </div>
+                    <div id="status-calibre-path" class="status">No Calibre metadata configured.</div>
+                </div>
             </div>
         </section>
     </main>
@@ -191,6 +259,8 @@
     <script src="js/search-books.js"></script>
     <script src="js/search-isbn.js"></script>
     <script src="js/search-authors.js"></script>
+    <script src="js/calibre.js"></script>
     <script src="js/hardcover.js"></script>
+    <script src="js/suggested.js"></script>
 </body>
 </html>

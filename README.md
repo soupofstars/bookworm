@@ -12,11 +12,9 @@
 - **Search Books, Authors, ISBNs** via Open Library with match/weak/suggested groupings.
 - **Library & Wanted Shelves** to keep quick lists (in-memory for now).
 - **Hardcover "Want to Read" integration** using your personal API key.
+- **Hardcover people-list picks** surfaced from your Calibre titles (find what other readers list alongside your books).
 - **Modern UI** with card layout, hoverable covers, lightbox previews, and expandable author chips linking to the in-app author search.
-- **Calibre placeholder** ready for future integrations.
 
-
-Open your browser at `http://localhost:5099`.
 
 ### Calibre metadata (SQLite)
 

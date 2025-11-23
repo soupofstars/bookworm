@@ -150,6 +150,78 @@ body {
     gap: 0.9rem;
     align-items: stretch;
 }
+.suggested-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+}
+.suggested-group {
+    padding: 0.15rem 0.1rem 0.4rem;
+    border-top: 1px solid var(--border);
+}
+.suggested-group:first-of-type {
+    border-top: none;
+}
+.suggested-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0 0.2rem 0.25rem;
+}
+.suggested-group-title {
+    font-weight: 700;
+    color: #e5e7eb;
+    letter-spacing: 0.01em;
+}
+.suggested-group-count {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+.suggested-pager {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.suggested-pager-info {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+.suggested-group .results-grid {
+    grid-template-columns: repeat(5, minmax(220px, 1fr));
+}
+@media (max-width: 1200px) {
+    .suggested-group .results-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+}
+.suggested-search {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: #0f172a;
+    border: 1px solid var(--border);
+    padding: 0.25rem 0.4rem;
+    border-radius: 999px;
+}
+.suggested-search input {
+    background: transparent;
+    border: none;
+    color: #e5e7eb;
+    outline: none;
+    min-width: 240px;
+}
+.suggested-search input::placeholder {
+    color: var(--text-muted);
+}
+.suggested-search .btn-ghost {
+    padding: 0.2rem 0.45rem;
+    line-height: 1;
+    color: var(--text-muted);
+}
+.suggested-search .btn-ghost:hover {
+    color: #fff;
+}
 
 @media (min-width: 1600px) {
     .results-grid {
@@ -309,15 +381,15 @@ body {
 }
 .book-author {
     font-size: 0.85rem;
-    color: var(--text-muted);
+    color: #ffffff;
     overflow-wrap: anywhere;
 }
 .book-isbn-label {
     margin-top: 0.75rem;
-    font-size: 0.72rem;
+    font-size: 0.65rem;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: #cbb6a4;
+    color: #c8b3b3;
     font-weight: 600;
 }
 .book-footer {
@@ -638,8 +710,8 @@ body {
 .hidden { display: none; }
 .isbn-inline {
     display: block;
-    font-size: 1.05rem;
+    font-size: 0.85rem;
     font-weight: 600;
-    color: var(--text);
+    color: #ffffff;
     letter-spacing: 0.02em;
 }

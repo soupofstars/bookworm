@@ -174,15 +174,27 @@ public class CalibreMirrorRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
-                   has_cover, formats_json, tags_json, publisher, series, file_size_mb,
-                   description, cover_url
-            FROM calibre_books
-            ORDER BY COALESCE(added_at, updated_at) DESC
-            LIMIT @take;
-            """;
-        cmd.Parameters.AddWithValue("@take", take);
+        var unlimited = take <= 0;
+        cmd.CommandText = unlimited
+            ? """
+                SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
+                       has_cover, formats_json, tags_json, publisher, series, file_size_mb,
+                       description, cover_url
+                FROM calibre_books
+                ORDER BY COALESCE(added_at, updated_at) DESC;
+                """
+            : """
+                SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
+                       has_cover, formats_json, tags_json, publisher, series, file_size_mb,
+                       description, cover_url
+                FROM calibre_books
+                ORDER BY COALESCE(added_at, updated_at) DESC
+                LIMIT @take;
+                """;
+        if (!unlimited)
+        {
+            cmd.Parameters.AddWithValue("@take", take);
+        }
 
         var results = new List<CalibreMirrorBook>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

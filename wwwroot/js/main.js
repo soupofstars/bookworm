@@ -1,12 +1,17 @@
 (function () {
     const state = {
         library: [],
+        libraryLoading: false,
+        libraryLoaded: false,
+        librarySyncText: '',
         wanted: [],
         wantedLoading: false,
         wantedLoaded: false,
         hardcoverSyncEnabled: false
     };
     const HARDCOVER_SYNC_KEY = 'bookworm:hardcover-sync';
+    const HARDCOVER_SYNC_INTERVAL_MS = 5 * 60 * 1000; // periodic Hardcover sync when enabled
+    const hardcoverIdCache = new Map();
 
     const sections = {
         'discover-books': document.getElementById('section-discover-books'),
@@ -14,6 +19,7 @@
         'discover-isbn': document.getElementById('section-discover-isbn'),
         library: document.getElementById('section-library'),
         wanted: document.getElementById('section-wanted'),
+        suggested: document.getElementById('section-suggested'),
         'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
         calibre: document.getElementById('section-calibre'),
         settings: document.getElementById('section-settings')
@@ -39,8 +45,65 @@
         calibreSettingsCard: document.getElementById('settings-calibre-card')
     };
 
+    let hardcoverSyncTimer = null;
+
     function isHardcoverBook(book) {
-        return Boolean(book && book.source === 'hardcover' && book.id);
+        return Boolean(book && book.source === 'hardcover');
+    }
+
+    function normalizeCalibreBook(raw) {
+        const toArray = (value) => {
+            if (Array.isArray(value)) return value;
+            if (value == null) return [];
+            return [value].filter(Boolean);
+        };
+
+        const copy = Object.assign({}, raw);
+        copy.source = 'calibre';
+        copy.calibre_id = raw.id;
+        const baseId = raw.id != null ? `calibre-${raw.id}` : (raw.slug || raw.title || Math.random().toString(36).slice(2, 8));
+        copy.id = baseId;
+        copy.slug = baseId;
+
+        const authors = toArray(raw.authorNames || raw.authors || [])
+            .map(value => typeof value === 'string' ? value.trim() : String(value))
+            .filter(Boolean);
+        if (authors.length) {
+            copy.author_names = authors;
+            copy.authors = authors;
+        }
+
+        copy.formats = toArray(raw.formats).map(String);
+        copy.tags = toArray(raw.tags).map(String);
+        copy.publisher = raw.publisher || null;
+        copy.series = raw.series || null;
+
+        const isbn = typeof raw.isbn === 'string' ? raw.isbn.trim() : '';
+        if (isbn) {
+            if (isbn.replace(/[-\\s]/g, '').length > 10) {
+                copy.isbn13 = isbn;
+            } else {
+                copy.isbn10 = isbn;
+            }
+        }
+
+        if (typeof raw.fileSizeMb === 'number') {
+            copy.size_mb = Math.round(raw.fileSizeMb * 10) / 10;
+        }
+
+        if (typeof raw.rating === 'number') {
+            copy.rating = raw.rating > 5
+                ? Math.round((raw.rating / 2) * 10) / 10
+                : raw.rating;
+        }
+
+        copy.description = raw.description || (raw.path ? `Calibre path: ${raw.path}` : copy.description);
+        const resolvedCover = raw.coverUrl || (raw.hasCover && raw.id != null ? `/calibre-covers/${raw.id}.jpg` : null);
+        if (resolvedCover) {
+            copy.image = { url: resolvedCover };
+            copy.coverUrl = resolvedCover;
+        }
+        return copy;
     }
 
     function updateHardcoverToggleUI() {
@@ -84,6 +147,11 @@
         updateHardcoverToggleUI();
         if (next && !prev && (!options || options.triggerSync !== false)) {
             mirrorHardcoverWanted({ force: true, retries: 8 });
+        }
+        if (next) {
+            startHardcoverSyncTimer(false);
+        } else {
+            stopHardcoverSyncTimer();
         }
     }
 
@@ -194,7 +262,16 @@
     }
 
     function createBookCard(book, options) {
-        const opts = Object.assign({ showWanted: false, showAddToLibrary: false, useWantedLayout: false, enableViewLink: true }, options || {});
+        const opts = Object.assign(
+            {
+                showWanted: false,
+                showAddToLibrary: false,
+                useWantedLayout: false,
+                enableViewLink: true,
+                matchScore: null,
+                matchScoreLabel: null
+            },
+            options || {});
         const isbnText = book.isbn13 || book.isbn10 || '';
         const cardSpan = isbnText.length > 20 ? 2 : 1;
         const isCalibre = book.source === 'calibre';
@@ -246,6 +323,7 @@
         const viewLink = opts.enableViewLink && detailsUrl
             ? `<a href="${detailsUrl}" target="_blank" class="btn btn-view">View more</a>`
             : '';
+        let viewLinkForActions = viewLink;
 
         let actionMarkup = '';
         if (opts.showWanted) {
@@ -281,6 +359,10 @@
 
         const rightPills = (() => {
             if (opts.useWantedLayout) {
+                if (typeof opts.matchScore === 'number') {
+                    const scoreText = escapeHtml(String(opts.matchScore));
+                    return [{ label: 'Match score:', value: `${scoreText}` }];
+                }
                 return [{ label: 'Source:', value: `<span class="book-source">${formatSourceLabel(book)}</span>` }];
             }
             if (isCalibre) {
@@ -294,18 +376,31 @@
             return [{ label: 'ISBN:', value: isbnValue }];
         })();
 
-        const isbnInlineBlock = opts.useWantedLayout && isbnValue
+        let inlineViewLink = '';
+        if (opts.useWantedLayout && viewLink) {
+            inlineViewLink = `<div class="book-inline-action">${viewLink}</div>`;
+            viewLinkForActions = '';
+        }
+
+        const isbnInlineBlock = opts.useWantedLayout && (isbnValue || inlineViewLink)
             ? `
                 <div class="book-info-group">
-                    <div class="book-info-label">ISBN</div>
-                    <div class="book-isbn-inline">${isbnValue}</div>
+                    ${isbnValue ? `
+                        <div class="book-info-label">ISBN</div>
+                        <div class="book-isbn-inline">${isbnValue}</div>
+                    ` : ''}
+                    ${inlineViewLink}
                 </div>
             `
             : '';
 
-        const actionsHtml = [actionMarkup, viewLink].filter(Boolean).length
-            ? `<div class="book-actions book-pill">${[actionMarkup, viewLink].filter(Boolean).join('')}</div>`
-            : '';
+        let actionsHtml = '';
+        const combinedActions = [actionMarkup, viewLinkForActions].filter(Boolean).join('');
+        if (combinedActions) {
+            actionsHtml = opts.useWantedLayout
+                ? `<div class="book-actions">${combinedActions}</div>`
+                : `<div class="book-actions book-pill">${combinedActions}</div>`;
+        }
 
         const coverElement = coverUrl
             ? `<img class="book-cover" loading="lazy" src="${coverUrl}" alt="Cover">`
@@ -370,7 +465,13 @@ div.innerHTML = `
 
         const wantedBtn = div.querySelector('.btn-wanted-action');
         if (wantedBtn) {
-            wantedBtn.addEventListener('click', () => addToWanted(book));
+            wantedBtn.addEventListener('click', () => {
+                if (typeof opts.onAddToWanted === 'function') {
+                    opts.onAddToWanted(book);
+                } else {
+                    addToWanted(book);
+                }
+            });
         }
 
         const addLibBtn = div.querySelector('.btn-addlib-action');
@@ -531,22 +632,148 @@ div.innerHTML = `
         }
     }
 
-    async function updateHardcoverWantState(book, shouldWant) {
-        if (!state.hardcoverSyncEnabled || !isHardcoverBook(book)) return;
+    async function readHardcoverError(res) {
         try {
-            const res = await fetch('/hardcover/want-to-read/status', {
+            const text = await res.text();
+            if (!text) return null;
+            return parseHardcoverErrorText(text);
+        } catch {
+            return null;
+        }
+    }
+
+    function parseHardcoverErrorText(text) {
+        if (!text) return null;
+        try {
+            const json = JSON.parse(text);
+            if (json && typeof json === 'object') {
+                if (typeof json.error === 'string') return json.error;
+                if (typeof json.title === 'string') return json.title;
+                if (Array.isArray(json.errors) && json.errors.length) {
+                    const first = json.errors[0];
+                    if (first && typeof first.message === 'string') {
+                        return first.message;
+                    }
+                }
+            }
+        } catch {
+            // not JSON
+        }
+        return text;
+    }
+
+    function extractIsbnCandidate(book) {
+        const candidates = [];
+        const push = (val) => {
+            if (typeof val === 'string' && val.trim().length) {
+                candidates.push(val.trim());
+            }
+        };
+        push(book.isbn13 || book.isbn_13);
+        push(book.isbn10 || book.isbn_10);
+        if (book.default_physical_edition) {
+            push(book.default_physical_edition.isbn_13);
+            push(book.default_physical_edition.isbn_10);
+        }
+        if (book.default_ebook_edition) {
+            push(book.default_ebook_edition.isbn_13);
+            push(book.default_ebook_edition.isbn_10);
+        }
+        if (Array.isArray(book.isbn13) && book.isbn13.length) push(book.isbn13[0]);
+        if (Array.isArray(book.isbn_13) && book.isbn_13.length) push(book.isbn_13[0]);
+        if (Array.isArray(book.isbn10) && book.isbn10.length) push(book.isbn10[0]);
+        if (Array.isArray(book.isbn_10) && book.isbn_10.length) push(book.isbn_10[0]);
+        if (!candidates.length) return null;
+        const normalized = candidates.map(c => c.replace(/[^0-9Xx]/g, '')).find(v => v.length >= 10);
+        return normalized || null;
+    }
+
+    async function resolveHardcoverBookId(book) {
+        if (!book) return null;
+        const existingId = book.id || book.book_id || book.bookId;
+        if (isValidHardcoverId(existingId)) return existingId;
+
+        const isbn = extractIsbnCandidate(book);
+        if (!isbn) return null;
+        if (hardcoverIdCache.has(isbn)) {
+            return hardcoverIdCache.get(isbn);
+        }
+
+        try {
+            const res = await fetch('/hardcover/book/resolve', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bookId: book.id, wantToRead: !!shouldWant })
+                body: JSON.stringify({ isbn })
             });
             if (!res.ok) {
-                const detail = await res.text().catch(() => '');
-                throw new Error(detail || 'Failed to update Hardcover want-to-read.');
+                const detail = await readHardcoverError(res);
+                console.warn('Failed to resolve Hardcover id', res.status, detail);
+                return null;
+            }
+            const data = await res.json();
+            const resolvedId = data?.id;
+            if (resolvedId) {
+                hardcoverIdCache.set(isbn, resolvedId);
+                return resolvedId;
+            }
+        } catch (err) {
+            console.warn('Error resolving Hardcover id', err);
+        }
+
+        return null;
+    }
+
+    function isValidHardcoverId(value) {
+        if (value == null) return false;
+        const str = String(value).trim();
+        if (!str) return false;
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const digits = /^[0-9]+$/;
+        return uuid.test(str) || digits.test(str);
+    }
+
+    async function updateHardcoverWantState(book, shouldWant) {
+        if (!state.hardcoverSyncEnabled || !isHardcoverBook(book)) return;
+        // API only supports adding (insert_user_book). Skip remote call on removals.
+        if (!shouldWant) return;
+        let bookId = book.id ?? book.book_id ?? book.bookId;
+        if (!isValidHardcoverId(bookId)) {
+            bookId = await resolveHardcoverBookId(book);
+        }
+        if (!isValidHardcoverId(bookId)) {
+            const msg = 'Cannot sync to Hardcover: missing/invalid book id.';
+            if (refs.hardcoverToggleStatus) {
+                refs.hardcoverToggleStatus.textContent = msg;
+            }
+            console.warn(msg, book);
+            return;
+        }
+        const payload = { book_id: bookId, status_id: 1 };
+        console.debug('[Hardcover] want-to-read payload', payload);
+        try {
+            const url = '/hardcover/want-to-read/status?debug=1';
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const resText = await res.text();
+            console.debug('[Hardcover] want-to-read response', { status: res.status, body: resText, payload });
+            if (!res.ok) {
+                const detail = parseHardcoverErrorText(resText);
+                const message = detail || `Failed to update Hardcover want-to-read (HTTP ${res.status}).`;
+                console.warn('Hardcover want-to-read update failed', { status: res.status, detail, payload });
+                throw new Error(message);
+            }
+            console.debug('[Hardcover] want-to-read update ok', { payload });
+            if (refs.hardcoverToggleStatus) {
+                refs.hardcoverToggleStatus.textContent = 'Synced with Hardcover.';
             }
         } catch (err) {
             console.error('Hardcover sync failed', err);
             if (refs.hardcoverToggleStatus) {
-                refs.hardcoverToggleStatus.textContent = 'Error syncing with Hardcover.';
+                const msg = err?.message || 'Error syncing with Hardcover.';
+                refs.hardcoverToggleStatus.textContent = msg;
             }
         }
     }
@@ -579,8 +806,8 @@ div.innerHTML = `
     }
 
     function handleHardcoverWantedBooks(books) {
-        if (!state.hardcoverSyncEnabled) return;
-        mergeWantedBooks(books, { skipHardcoverRemote: true }).then(() => {
+        if (!state.hardcoverSyncEnabled) return Promise.resolve();
+        return mergeWantedBooks(books, { skipHardcoverRemote: true }).then(() => {
             if (refs.hardcoverToggleStatus) {
                 refs.hardcoverToggleStatus.textContent = 'Synced with Hardcover.';
             }
@@ -592,7 +819,40 @@ div.innerHTML = `
         });
     }
 
-    function mirrorHardcoverWanted(options) {
+    function syncHardcoverRemovals(remoteList) {
+        const remoteKeys = new Set(
+            (remoteList || [])
+                .filter(isHardcoverBook)
+                .map(book => bookKey(book))
+        );
+
+        const toRemove = state.wanted.filter(
+            book => isHardcoverBook(book) && !remoteKeys.has(bookKey(book))
+        );
+
+        if (!toRemove.length) return Promise.resolve();
+
+        // Drop from local state/UI
+        state.wanted = state.wanted.filter(
+            book => !(isHardcoverBook(book) && !remoteKeys.has(bookKey(book)))
+        );
+        renderWanted();
+        if (refs.wantedStatus) {
+            refs.wantedStatus.textContent = `You have ${state.wanted.length} wanted book(s).`;
+        }
+
+        // Remove from server-side wanted table
+        const deletions = toRemove.map(book => {
+            const key = bookKey(book);
+            return deleteWantedRemote(key).catch(err => {
+                console.error('Failed to delete wanted book from local store', { key, err });
+            });
+        });
+
+        return Promise.allSettled(deletions);
+    }
+
+    async function mirrorHardcoverWanted(options) {
         if (!state.hardcoverSyncEnabled) return;
         const opts = Object.assign({ force: false, retries: 0 }, options || {});
         const fetcher = window.bookwormHardcover && window.bookwormHardcover.fetchWantedBooks;
@@ -605,9 +865,28 @@ div.innerHTML = `
             }
             return;
         }
-        fetcher({ force: opts.force }).then(books => {
-            handleHardcoverWantedBooks(books);
-        }).catch(err => {
+
+        try {
+            const books = await fetcher({ force: opts.force });
+            const remoteList = Array.isArray(books) ? books : [];
+
+            await handleHardcoverWantedBooks(remoteList);
+            // Remove local Hardcover items the remote list no longer wants before pushing anything back.
+            await syncHardcoverRemovals(remoteList);
+
+            if (!state.hardcoverSyncEnabled) return;
+
+            const remoteKeys = new Set(
+                remoteList.filter(isHardcoverBook).map(book => bookKey(book))
+            );
+            const missingLocal = state.wanted
+                .filter(isHardcoverBook)
+                .filter(book => !remoteKeys.has(bookKey(book)));
+
+            if (missingLocal.length) {
+                await Promise.allSettled(missingLocal.map(book => updateHardcoverWantState(book, true)));
+            }
+        } catch (err) {
             console.error('Failed to sync Hardcover wanted list', err);
             if (opts.retries > 0) {
                 setTimeout(() => mirrorHardcoverWanted({
@@ -617,7 +896,22 @@ div.innerHTML = `
             } else if (refs.wantedStatus) {
                 refs.wantedStatus.textContent = 'Unable to sync Hardcover wanted list.';
             }
-        });
+        }
+    }
+
+    function startHardcoverSyncTimer(runImmediately = false) {
+        stopHardcoverSyncTimer();
+        if (!state.hardcoverSyncEnabled) return;
+        const tick = () => mirrorHardcoverWanted({ force: true, retries: 2 });
+        if (runImmediately) tick();
+        hardcoverSyncTimer = setInterval(tick, HARDCOVER_SYNC_INTERVAL_MS);
+    }
+
+    function stopHardcoverSyncTimer() {
+        if (hardcoverSyncTimer) {
+            clearInterval(hardcoverSyncTimer);
+            hardcoverSyncTimer = null;
+        }
     }
 
     async function loadWantedFromServer() {
@@ -643,26 +937,36 @@ div.innerHTML = `
         }
     }
 
-    function addToWanted(book) {
+    function addToWanted(book, options) {
+        const opts = options || {};
         const key = bookKey(book);
         if (!state.wanted.some(b => bookKey(b) === key)) {
             state.wanted.push(book);
             renderWanted();
             refs.wantedStatus.textContent = 'Book added to Wanted.';
-            saveWantedRemote(key, book).catch(err => {
-                console.error(err);
-                refs.wantedStatus.textContent = 'Unable to save wanted book.';
-                const idx = state.wanted.findIndex(b => bookKey(b) === key);
-                if (idx !== -1) {
-                    state.wanted.splice(idx, 1);
-                    renderWanted();
-                }
-            });
+            saveWantedRemote(key, book)
+                .then(() => {
+                    if (typeof opts.onSaved === 'function') {
+                        opts.onSaved();
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    refs.wantedStatus.textContent = 'Unable to save wanted book.';
+                    const idx = state.wanted.findIndex(b => bookKey(b) === key);
+                    if (idx !== -1) {
+                        state.wanted.splice(idx, 1);
+                        renderWanted();
+                    }
+                });
             if (state.hardcoverSyncEnabled && isHardcoverBook(book)) {
                 updateHardcoverWantState(book, true);
             }
         } else {
             refs.wantedStatus.textContent = 'Already in Wanted.';
+            if (typeof opts.onAlready === 'function') {
+                opts.onAlready();
+            }
         }
     }
 
@@ -690,17 +994,107 @@ div.innerHTML = `
         }
     }
 
+    let libraryLoadPromise = null;
+
+    function setLibraryFromCalibre(rawBooks, syncText) {
+        const normalized = Array.isArray(rawBooks)
+            ? rawBooks.map(normalizeCalibreBook)
+            : [];
+        state.library = normalized;
+        state.libraryLoaded = true;
+        state.libraryLoading = false;
+        state.librarySyncText = syncText || '';
+        renderLibrary();
+        return normalized.length;
+    }
+
+    async function loadLibraryFromCalibre(forceReload = false) {
+        if (state.libraryLoading && libraryLoadPromise) {
+            return libraryLoadPromise;
+        }
+        if (state.libraryLoaded && !forceReload) {
+            return Promise.resolve(state.library);
+        }
+
+        state.libraryLoading = true;
+        renderLibrary();
+
+        libraryLoadPromise = (async () => {
+            try {
+                const res = await fetch('/calibre/books?take=0');
+                if (!res.ok) {
+                    const detail = await res.text().catch(() => '');
+                    throw new Error(detail || `Unable to load Calibre library (HTTP ${res.status}).`);
+                }
+
+                const data = await res.json();
+                const books = Array.isArray(data?.books) ? data.books : [];
+                const syncText = data?.lastSync
+                    ? `Last sync: ${new Date(data.lastSync).toLocaleString()}`
+                    : 'Calibre not synced yet.';
+
+                const count = setLibraryFromCalibre(books, syncText);
+                if (count === 0 && refs.libraryStatus) {
+                    refs.libraryStatus.textContent = data?.lastSync
+                        ? 'No books in Calibre mirror. Click “Sync Calibre” to refresh.'
+                        : 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
+                }
+
+                return state.library;
+            } catch (err) {
+                console.error('Failed to load Calibre library', err);
+                state.libraryLoaded = false;
+                if (refs.libraryStatus) {
+                    refs.libraryStatus.textContent = err?.message || 'Unable to load Calibre library.';
+                }
+                return [];
+            } finally {
+                state.libraryLoading = false;
+                renderLibrary();
+            }
+        })();
+
+        return libraryLoadPromise;
+    }
+
+    function reloadLibraryFromCalibre() {
+        state.libraryLoaded = false;
+        return loadLibraryFromCalibre(true);
+    }
+
     function renderLibrary() {
         const { libraryStatus, libraryResults } = refs;
         libraryResults.innerHTML = '';
-        if (!state.library.length) {
-            libraryStatus.textContent = 'No books on your bookshelf yet.';
+
+        if (state.libraryLoading && !state.libraryLoaded) {
+            libraryStatus.textContent = 'Loading Calibre library…';
             return;
         }
 
-        libraryStatus.textContent = `You have ${state.library.length} book(s) on your bookshelf.`;
+        if (!state.library.length) {
+            if (state.libraryLoaded) {
+                const syncText = state.librarySyncText || '';
+                const unsynced = syncText.toLowerCase().includes('not synced');
+                if (unsynced) {
+                    libraryStatus.textContent = 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
+                } else {
+                    const suffix = syncText ? ` ${syncText}` : '';
+                    libraryStatus.textContent = `No books found in Calibre mirror.${suffix} Click “Sync Calibre” to refresh.`;
+                }
+            } else {
+                libraryStatus.textContent = 'No books on your bookshelf yet.';
+            }
+            return;
+        }
+
+        const syncSuffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
+        libraryStatus.textContent = `Calibre library: showing ${state.library.length} book(s).${syncSuffix}`;
         state.library.forEach(book => {
-            libraryResults.appendChild(createBookCard(book, { showWanted: false, showAddToLibrary: false }));
+            libraryResults.appendChild(createBookCard(book, {
+                showWanted: false,
+                showAddToLibrary: false,
+                enableViewLink: false
+            }));
         });
     }
 
@@ -758,8 +1152,12 @@ div.innerHTML = `
             }
         } else if (sectionName === 'library') {
             refs.topbarTitle.textContent = 'Bookshelf';
+            loadLibraryFromCalibre();
         } else if (sectionName === 'wanted') {
             refs.topbarTitle.textContent = 'Wanted';
+        } else if (sectionName === 'suggested') {
+            refs.topbarTitle.textContent = 'Suggested';
+            window.bookwormSuggested && window.bookwormSuggested.ensureLoaded();
         } else if (sectionName === 'hardcover-wanted') {
             refs.topbarTitle.textContent = 'Hardcover.app · Want to read';
             window.bookwormHardcover && window.bookwormHardcover.ensureLoaded();
@@ -800,11 +1198,16 @@ div.innerHTML = `
     loadWantedFromServer();
     if (state.hardcoverSyncEnabled) {
         mirrorHardcoverWanted({ force: false, retries: 8 });
+        startHardcoverSyncTimer(false);
     }
 
     window.bookwormApp = {
         state,
         createBookCard,
+        normalizeCalibreBook,
+        setLibraryFromCalibre,
+        loadLibraryFromCalibre,
+        reloadLibraryFromCalibre,
         addToLibrary,
         addToWanted,
         renderLibrary,

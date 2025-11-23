@@ -6,6 +6,8 @@
     const resultsEl = document.getElementById('hardcover-wanted-results');
     let loaded = false;
     let loading = false;
+    let cachedBooks = [];
+    let lastLoadPromise = null;
 
     function coerceArray(value) {
         if (Array.isArray(value)) return value;
@@ -88,65 +90,104 @@
             normalized.edition_count = normalized.editions_count;
         }
 
+        normalized.source = 'hardcover';
+        if (!normalized.slug && book.slug) {
+            normalized.slug = book.slug;
+        }
+        if (!normalized.id && book.id) {
+            normalized.id = book.id;
+        }
+
         return normalized;
     }
 
-    async function loadHardcoverWanted() {
-        if (loading) return;
+    function loadHardcoverWanted(forceReload = false) {
+        if (loading && lastLoadPromise) {
+            return lastLoadPromise;
+        }
+        if (loaded && !forceReload) {
+            return Promise.resolve(cachedBooks);
+        }
+
         loading = true;
         statusEl.textContent = 'Loading from Hardcover…';
         resultsEl.innerHTML = '';
 
-        try {
-            const res = await fetch('/hardcover/want-to-read');
-            if (!res.ok) {
-                let detail = '';
-                try {
-                    detail = await res.text();
-                } catch {
-                    // ignore
+        lastLoadPromise = (async () => {
+            try {
+                const res = await fetch('/hardcover/want-to-read');
+                if (!res.ok) {
+                    let detail = '';
+                    try {
+                        detail = await res.text();
+                    } catch {
+                        // ignore
+                    }
+                    const suffix = detail ? ` (${detail})` : '';
+                    statusEl.textContent = 'Error loading from Hardcover: ' + res.status + suffix;
+                    throw new Error('Hardcover load failed');
                 }
-                const suffix = detail ? ` (${detail})` : '';
-                statusEl.textContent = 'Error loading from Hardcover: ' + res.status + suffix;
-                loading = false;
-                return;
-            }
 
-            const data = await res.json();
-            const meArr = data?.data?.me;
-            const firstUser = Array.isArray(meArr) && meArr.length ? meArr[0] : null;
-            const userBooks = firstUser?.user_books ?? [];
+                const data = await res.json();
+                const meData = data?.data?.me;
+                const firstUser = Array.isArray(meData)
+                    ? (meData.length ? meData[0] : null)
+                    : (meData && typeof meData === 'object' ? meData : null);
+                const userBooks = firstUser?.user_books ?? firstUser?.user_book ?? [];
 
-            if (!userBooks.length) {
-                statusEl.textContent = 'No “want to read” books on Hardcover yet.';
+                cachedBooks = [];
+                if (!userBooks.length) {
+                    statusEl.textContent = 'No “want to read” books on Hardcover yet.';
+                    loaded = true;
+                    cachedBooks = [];
+                    if (typeof app.handleHardcoverWantedBooks === 'function') {
+                        app.handleHardcoverWantedBooks(cachedBooks);
+                    }
+                    return cachedBooks;
+                }
+
+                statusEl.textContent = `You have ${userBooks.length} “want to read” book(s) on Hardcover.`;
+                resultsEl.innerHTML = '';
+
+                userBooks.forEach(entry => {
+                    const book = entry.book;
+                    if (!book) return;
+                    const normalized = normalizeHardcoverBook(book);
+                    cachedBooks.push(normalized);
+                    resultsEl.appendChild(app.createBookCard(normalized));
+                });
+
                 loaded = true;
+                if (typeof app.handleHardcoverWantedBooks === 'function') {
+                    app.handleHardcoverWantedBooks(cachedBooks);
+                }
+                return cachedBooks;
+            } catch (err) {
+                console.error(err);
+                statusEl.textContent = 'Error talking to Bookworm API.';
+                throw err;
+            } finally {
                 loading = false;
-                return;
             }
+        })();
 
-            statusEl.textContent = `You have ${userBooks.length} “want to read” book(s) on Hardcover.`;
-            resultsEl.innerHTML = '';
-
-            userBooks.forEach(entry => {
-                const book = entry.book;
-                if (!book) return;
-                resultsEl.appendChild(app.createBookCard(normalizeHardcoverBook(book)));
-            });
-
-            loaded = true;
-        } catch (err) {
-            console.error(err);
-            statusEl.textContent = 'Error talking to Bookworm API.';
-        } finally {
-            loading = false;
-        }
+        return lastLoadPromise;
     }
 
     window.bookwormHardcover = {
-        ensureLoaded() {
-            if (!loaded) {
-                loadHardcoverWanted();
-            }
-        }
+        ensureLoaded(forceReload) {
+            return loadHardcoverWanted(!!forceReload);
+        },
+        reload() {
+            return loadHardcoverWanted(true);
+        },
+        getCachedBooks() {
+            return cachedBooks.slice();
+        },
+        fetchWantedBooks(options) {
+            const opts = Object.assign({ force: false }, options || {});
+            return loadHardcoverWanted(!!opts.force);
+        },
+        normalizeBook: normalizeHardcoverBook
     };
 })();

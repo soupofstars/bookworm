@@ -1,6 +1,5 @@
 using System.Text.Json;
-using Npgsql;
-using NpgsqlTypes;
+using Microsoft.Data.Sqlite;
 
 namespace Bookworm.Data;
 
@@ -9,28 +8,50 @@ public record WantedBookResponse(string Key, JsonElement Book);
 
 public class WantedRepository
 {
-    private readonly NpgsqlDataSource? _dataSource;
+    private readonly string? _connectionString;
     private readonly List<WantedBookStorage> _memory = new();
     private readonly object _gate = new();
 
     private sealed record WantedBookStorage(string Key, string Payload);
 
-    public bool IsConfigured => _dataSource is not null;
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(_connectionString);
 
-    public WantedRepository(NpgsqlDataSource? dataSource)
+    public WantedRepository(string? connectionString)
     {
-        _dataSource = dataSource;
-        if (_dataSource is null) return;
+        _connectionString = string.IsNullOrWhiteSpace(connectionString)
+            ? null
+            : NormalizeConnectionString(connectionString);
 
-        using var conn = _dataSource.OpenConnection();
+        if (_connectionString is null) return;
+
+        EnsureDatabase();
+    }
+
+    private static string NormalizeConnectionString(string raw)
+    {
+        var builder = new SqliteConnectionStringBuilder(raw);
+        var dataSource = builder.DataSource;
+        if (!Path.IsPathRooted(dataSource))
+        {
+            dataSource = Path.Combine(AppContext.BaseDirectory, dataSource);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(dataSource)!);
+        builder.DataSource = dataSource;
+        return builder.ToString();
+    }
+
+    private void EnsureDatabase()
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS wanted_books (
-                id BIGSERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_key TEXT NOT NULL UNIQUE,
-                payload JSONB NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """;
         cmd.ExecuteNonQuery();
@@ -47,7 +68,8 @@ public class WantedRepository
         }
 
         var results = new List<WantedBookResponse>();
-        await using var conn = await _dataSource!.OpenConnectionAsync(cancellationToken);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT book_key, payload FROM wanted_books ORDER BY created_at DESC";
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -82,17 +104,18 @@ public class WantedRepository
             return;
         }
 
-        await using var conn = await _dataSource!.OpenConnectionAsync(cancellationToken);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO wanted_books (book_key, payload)
-            VALUES (@key, @payload)
-            ON CONFLICT (book_key) DO UPDATE
-            SET payload = EXCLUDED.payload,
-                updated_at = NOW();
+            INSERT INTO wanted_books (book_key, payload, created_at, updated_at)
+            VALUES (@key, @payload, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(book_key) DO UPDATE SET
+                payload = excluded.payload,
+                updated_at = CURRENT_TIMESTAMP;
             """;
-        cmd.Parameters.AddWithValue("key", request.Key);
-        cmd.Parameters.AddWithValue("payload", NpgsqlDbType.Jsonb, payload);
+        cmd.Parameters.AddWithValue("@key", request.Key);
+        cmd.Parameters.AddWithValue("@payload", payload);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -111,10 +134,11 @@ public class WantedRepository
             return;
         }
 
-        await using var conn = await _dataSource!.OpenConnectionAsync(cancellationToken);
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM wanted_books WHERE book_key = @key";
-        cmd.Parameters.AddWithValue("key", key);
+        cmd.Parameters.AddWithValue("@key", key);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 

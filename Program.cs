@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Bookworm.Data;
@@ -16,6 +17,10 @@ builder.Services.AddSingleton<UserSettingsStore>();
 builder.Services.AddSingleton<CalibreRepository>();
 builder.Services.AddSingleton<CalibreCoverService>();
 builder.Services.AddSingleton<CalibreSyncService>();
+builder.Services.AddSingleton<HardcoverListService>();
+builder.Services.AddSingleton(new HardcoverListCacheRepository(wantedDb));
+builder.Services.AddSingleton(new SuggestedRepository(wantedDb));
+builder.Services.AddSingleton<SuggestedRankingService>();
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -30,8 +35,13 @@ builder.Services.AddHttpClient("hardcover", (sp, client) =>
     var apiKey = config["Hardcover:ApiKey"];
     if (!string.IsNullOrWhiteSpace(apiKey))
     {
-        // Docs say: Authorization: YOUR_API_KEY (no Bearer)
-        client.DefaultRequestHeaders.Add("Authorization", apiKey);
+        var headerValue = apiKey.Trim();
+        if (!headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            headerValue = $"Bearer {headerValue}";
+        }
+
+        client.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(headerValue);
     }
 });
 
@@ -80,29 +90,71 @@ static async Task<IResult> ForwardHardcoverError(HttpResponseMessage response, s
         statusCode: (int)response.StatusCode);
 }
 
-static int ExtractAffectedRows(JsonDocument? document, string key)
+static bool ExistsInUserBooks(JsonDocument? doc)
 {
-    if (document is null)
+    if (doc is null ||
+        !doc.RootElement.TryGetProperty("data", out var data) ||
+        !data.TryGetProperty("me", out var meEl))
     {
-        return 0;
+        return false;
     }
 
-    if (!document.RootElement.TryGetProperty("data", out var dataElement))
+    JsonElement user = meEl;
+    if (meEl.ValueKind == JsonValueKind.Array)
     {
-        return 0;
+        if (meEl.GetArrayLength() == 0) return false;
+        user = meEl[0];
+    }
+    else if (meEl.ValueKind != JsonValueKind.Object)
+    {
+        return false;
     }
 
-    if (!dataElement.TryGetProperty(key, out var section))
+    foreach (var propertyName in new[] { "user_book", "user_books" })
     {
-        return 0;
+        if (user.TryGetProperty(propertyName, out var booksEl) &&
+            booksEl.ValueKind == JsonValueKind.Array &&
+            booksEl.GetArrayLength() > 0)
+        {
+            return true;
+        }
     }
 
-    if (!section.TryGetProperty("affected_rows", out var affected))
+    return false;
+}
+
+static bool HasGraphQlErrors(JsonDocument? doc)
+{
+    if (doc is null) return true;
+    if (!doc.RootElement.TryGetProperty("errors", out var errors)) return false;
+    return errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0;
+}
+
+static string? ExtractGraphQlErrors(JsonDocument? doc)
+{
+    if (doc is null) return null;
+    if (!doc.RootElement.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array)
     {
-        return 0;
+        return null;
     }
 
-    return affected.GetInt32();
+    var messages = new List<string>();
+    foreach (var err in errors.EnumerateArray())
+    {
+        if (err.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+        {
+            messages.Add(message.GetString()!);
+        }
+    }
+
+    return messages.Count > 0 ? string.Join("; ", messages) : errors.ToString();
+}
+
+static bool IsUniqueConflict(string? errorMessage)
+{
+    if (string.IsNullOrWhiteSpace(errorMessage)) return false;
+    var lower = errorMessage.ToLowerInvariant();
+    return lower.Contains("constraint") || lower.Contains("duplicate") || lower.Contains("unique");
 }
 
 static string ExpandUserPath(string path)
@@ -133,6 +185,192 @@ static string ExpandUserPath(string path)
     }
 
     return expanded;
+}
+
+static string? ExtractKey(JsonElement book)
+{
+    if (book.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+    {
+        return id.GetString();
+    }
+
+    if (book.TryGetProperty("slug", out var slug) && slug.ValueKind == JsonValueKind.String)
+    {
+        return slug.GetString();
+    }
+
+    if (book.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+    {
+        return title.GetString();
+    }
+
+    return null;
+}
+
+static T[] DeserializeJsonArray<T>(string? json)
+{
+    if (string.IsNullOrWhiteSpace(json)) return Array.Empty<T>();
+    try
+    {
+        return JsonSerializer.Deserialize<T[]>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+               ?? Array.Empty<T>();
+    }
+    catch
+    {
+        return Array.Empty<T>();
+    }
+}
+
+static IReadOnlyList<string> ExtractGenreTags(JsonElement book)
+{
+    if (!book.TryGetProperty("cached_tags", out var tags))
+    {
+        return Array.Empty<string>();
+    }
+
+    return ExtractGenresFromCachedTags(tags);
+}
+
+static IReadOnlyList<string> ExtractGenresFromCachedTags(JsonElement tagsElement)
+{
+    var ordered = new List<string>();
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    void AddName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0) return;
+        if (seen.Add(trimmed))
+        {
+            ordered.Add(trimmed);
+        }
+    }
+
+    void AddFromArray(JsonElement array)
+    {
+        if (array.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in array.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                AddName(item.GetString());
+            }
+            else if (item.ValueKind == JsonValueKind.Object)
+            {
+                AddName(TryResolveGenreName(item));
+            }
+        }
+    }
+
+    if (tagsElement.ValueKind == JsonValueKind.String)
+    {
+        var raw = tagsElement.GetString();
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                using var parsed = JsonDocument.Parse(raw);
+                return ExtractGenresFromCachedTags(parsed.RootElement);
+            }
+            catch
+            {
+                AddName(raw);
+            }
+        }
+        return ordered;
+    }
+
+    if (tagsElement.ValueKind == JsonValueKind.Array)
+    {
+        AddFromArray(tagsElement);
+        return ordered;
+    }
+
+    if (tagsElement.ValueKind == JsonValueKind.Object)
+    {
+        var keys = new[] { "Genre", "Genres", "genre", "genres" };
+        foreach (var key in keys)
+        {
+            if (tagsElement.TryGetProperty(key, out var genreNode))
+            {
+                if (genreNode.ValueKind == JsonValueKind.String)
+                {
+                    AddName(genreNode.GetString());
+                    return ordered;
+                }
+
+                AddFromArray(genreNode);
+                if (ordered.Count > 0)
+                {
+                    return ordered;
+                }
+            }
+        }
+
+        foreach (var prop in tagsElement.EnumerateObject())
+        {
+            AddFromArray(prop.Value);
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                AddName(prop.Value.GetString());
+            }
+        }
+    }
+
+    return ordered;
+}
+
+static string? TryResolveGenreName(JsonElement element)
+{
+    if (element.ValueKind != JsonValueKind.Object)
+    {
+        return null;
+    }
+
+    string? GetNested(JsonElement el, string property)
+    {
+        return el.TryGetProperty(property, out var nested)
+            ? nested.ValueKind switch
+            {
+                JsonValueKind.String => nested.GetString(),
+                JsonValueKind.Number => nested.GetRawText(),
+                _ => null
+            }
+            : null;
+    }
+
+    var direct = GetNested(element, "name") ?? GetNested(element, "label");
+    if (!string.IsNullOrWhiteSpace(direct))
+    {
+        return direct;
+    }
+
+    var tag = GetNested(element, "tag") ?? GetNested(element, "tagSlug");
+    if (!string.IsNullOrWhiteSpace(tag))
+    {
+        return tag;
+    }
+
+    if (element.TryGetProperty("genre", out var genreObj))
+    {
+        var name = GetNested(genreObj, "name");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            return name;
+        }
+    }
+
+    if (element.TryGetProperty("base_genre", out var baseGenreObj))
+    {
+        var name = GetNested(baseGenreObj, "name");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            return name;
+        }
+    }
+
+    return null;
 }
 
 // Wanted shelf endpoints (persisted locally via SQLite)
@@ -319,9 +557,49 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
 
     var client = factory.CreateClient("hardcover");
 
-    var graphqlRequest = new
+    var queries = new[]
     {
-        query = @"
+        @"
+            query MeWantToRead {
+              me {
+                user_book(
+                  where: { status_id: { _eq: 1 } }
+                  order_by: { date_added: desc }
+                ) {
+                  status_id
+                  book {
+                    id
+                    title
+                    slug
+                    rating
+                    ratings_count
+                    users_count
+                    editions_count
+                    default_physical_edition {
+                      isbn_13
+                      isbn_10
+                    }
+                    default_ebook_edition {
+                      isbn_13
+                      isbn_10
+                    }
+                    cached_contributors
+                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
+                      contributable_type
+                      author {
+                        id
+                        name
+                        slug
+                      }
+                    }
+                    image {
+                      url
+                    }
+                  }
+                }
+              }
+            }",
+        @"
             query MeWantToRead {
               me {
                 user_books(
@@ -363,19 +641,357 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
             }"
     };
 
-    var response = await client.PostAsJsonAsync("", graphqlRequest);
+    HttpResponseMessage? lastResponse = null;
+    foreach (var query in queries)
+    {
+        var response = await client.PostAsJsonAsync("", new { query });
+        lastResponse = response;
 
-    if (!response.IsSuccessStatusCode)
-        return await ForwardHardcoverError(response, "want-to-read");
+        if (!response.IsSuccessStatusCode)
+        {
+            continue;
+        }
 
-    var resultJson = await response.Content.ReadFromJsonAsync<object>();
-    return Results.Ok(resultJson);
+        var resultJson = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        if (!HasGraphQlErrors(resultJson))
+        {
+            return Results.Ok(resultJson);
+        }
+    }
+
+    return await ForwardHardcoverError(lastResponse!, "want-to-read");
 })
 .WithName("GetHardcoverWantToRead");
 
-app.MapGet("/calibre/books", async (CalibreMirrorRepository mirrorRepo, CalibreCoverService coverService, CancellationToken cancellationToken) =>
+app.MapGet("/hardcover/calibre-recommendations", async (
+    int? take,
+    int? lists,
+    int? perList,
+    double? minRating,
+    int? delayMs,
+    IConfiguration config,
+    CalibreMirrorRepository mirrorRepo,
+    HardcoverListService listService,
+    SuggestedRepository suggestedRepo,
+    CancellationToken cancellationToken) =>
 {
-    IReadOnlyList<CalibreMirrorBook> books = await mirrorRepo.GetBooksAsync(200, cancellationToken);
+    try
+    {
+        if (!IsHardcoverConfigured(config))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey."
+            });
+        }
+
+        var takeBooks = take.GetValueOrDefault(0);
+        var listsPerBook = Math.Clamp(lists ?? 12, 1, 50);
+        var itemsPerList = Math.Clamp(perList ?? 20, 1, 60);
+        var delay = Math.Clamp(delayMs ?? 450, 0, 2000);
+
+        var requestedTake = takeBooks <= 0 ? 0 : takeBooks;
+        var books = await mirrorRepo.GetBooksAsync(requestedTake, cancellationToken);
+        if (books.Count == 0)
+        {
+            return Results.BadRequest(new { error = "No Calibre books available. Sync Calibre first." });
+        }
+
+        var result = await listService.GetRecommendationsAsync(
+            books,
+            takeBooks,
+            listsPerBook,
+            itemsPerList,
+            minRating,
+            delay,
+            cancellationToken);
+
+        var recommendations = result.Recommendations
+            .Select(r => new
+            {
+                book = r.Book,
+                occurrences = r.Occurrences,
+                reasons = r.Reasons,
+                base_genres = ExtractGenreTags(r.Book)
+            })
+            .ToList();
+
+        var suggestedEntries = recommendations
+            .Select(r => new SuggestedEntry(
+                Book: r.book,
+                BaseGenres: r.base_genres,
+                Reasons: r.reasons,
+                SourceKey: ExtractKey(r.book)))
+            .ToList();
+        await suggestedRepo.UpsertMissingAsync(suggestedEntries, cancellationToken);
+
+        return Results.Ok(new
+        {
+            result.InspectedCalibreBooks,
+            result.MatchedCalibreBooks,
+            UniqueRecommendations = recommendations.Count,
+            Recommendations = recommendations,
+            result.Matches,
+            result.Steps,
+            totalCalibreBooks = books.Count
+        });
+    }
+    catch (Exception ex)
+    {
+        if (ex is HttpRequestException httpEx &&
+            (httpEx.Message.Contains("list_items_public", StringComparison.OrdinalIgnoreCase)
+             || httpEx.Message.Contains("list_items", StringComparison.OrdinalIgnoreCase)))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Hardcover API schema does not expose list_items/list_items_public. People-list recommendations are unavailable via this API."
+            });
+        }
+
+        return Results.Problem(
+            title: "Failed to load Hardcover people lists",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status502BadGateway,
+            extensions: new Dictionary<string, object?>
+            {
+                ["exception"] = ex.GetType().Name
+            });
+    }
+})
+.WithName("HardcoverCalibreRecommendations");
+
+app.MapGet("/hardcover/calibre-recommendations/stream", async (
+    int? take,
+    int? lists,
+    int? perList,
+    double? minRating,
+    int? delayMs,
+    IConfiguration config,
+    CalibreMirrorRepository mirrorRepo,
+    HardcoverListService listService,
+    HttpContext context,
+    HardcoverListCacheRepository cacheRepo,
+    SuggestedRepository suggestedRepo,
+    CancellationToken cancellationToken) =>
+{
+    var response = context.Response;
+    response.Headers.CacheControl = "no-cache";
+    response.Headers.Connection = "keep-alive";
+    response.Headers["X-Accel-Buffering"] = "no";
+    response.ContentType = "text/event-stream";
+
+    var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.RequestAborted);
+    var token = linked.Token;
+
+    async Task WriteEventAsync(string eventName, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        await response.WriteAsync($"event: {eventName}\n", token);
+        await response.WriteAsync($"data: {json}\n\n", token);
+        await response.Body.FlushAsync(token);
+    }
+
+    try
+    {
+        if (!IsHardcoverConfigured(config))
+        {
+            await WriteEventAsync("error", new { error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey." });
+            return Results.Empty;
+        }
+
+        var takeBooks = take.GetValueOrDefault(0);
+        var listsPerBook = Math.Clamp(lists ?? 25, 1, 100);
+        var itemsPerList = Math.Clamp(perList ?? 30, 1, 100);
+        var delay = Math.Clamp(delayMs ?? 2000, 2000, 120000);
+
+        var requestedTake = takeBooks <= 0 ? 0 : takeBooks;
+        var books = await mirrorRepo.GetBooksAsync(requestedTake, token);
+        if (books.Count == 0)
+        {
+            await WriteEventAsync("error", new { error = "No Calibre books available. Sync Calibre first." });
+            return Results.Empty;
+        }
+
+        var aggregator = new Dictionary<string, RecAccumulatorSummary>(StringComparer.OrdinalIgnoreCase);
+        var steps = new List<object>();
+        var inspected = 0;
+        var matched = 0;
+
+        var totalCalibreBooks = books.Count;
+
+        foreach (var book in books)
+        {
+            token.ThrowIfCancellationRequested();
+            inspected++;
+
+            var existing = await cacheRepo.GetAsync(book.Id, token);
+            HardcoverBookListResult result;
+            try
+            {
+                result = await listService.GetListsForBookAsync(book, listsPerBook, itemsPerList, minRating, token);
+            }
+            catch (Exception ex)
+            {
+                await WriteEventAsync("step", new
+                {
+                    calibreId = book.Id,
+                    title = book.Title,
+                    isbn = book.Isbn,
+                    matchedHardcover = false,
+                    hardcoverBookId = (string?)null,
+                    hardcoverTitle = (string?)null,
+                    listsChecked = 0,
+                    recommendationsAdded = 0,
+                    error = ex.Message
+                });
+                continue;
+            }
+
+            var listCount = result.Lists.Count;
+            var recCount = result.Recommendations.Count;
+            var matchedHardcover = !string.IsNullOrWhiteSpace(result.HardcoverId);
+            var preserveExisting = !matchedHardcover
+                                   && existing is not null
+                                   && string.Equals(existing.Status, "ok", StringComparison.OrdinalIgnoreCase)
+                                   && existing.ListCount > 0
+                                   && !string.IsNullOrWhiteSpace(existing.HardcoverId);
+
+            IReadOnlyList<HardcoverListHit> listsForUse = preserveExisting
+                ? DeserializeJsonArray<HardcoverListHit>(existing!.ListsJson)
+                : result.Lists;
+            IReadOnlyList<HardcoverListRecommendation> recsForUse = preserveExisting
+                ? DeserializeJsonArray<HardcoverListRecommendation>(existing!.RecommendationsJson)
+                : result.Recommendations;
+            var effectiveHardcoverId = preserveExisting ? existing!.HardcoverId : result.HardcoverId;
+            var effectiveHardcoverTitle = preserveExisting ? existing!.HardcoverTitle : result.HardcoverTitle;
+            var effectiveListCount = preserveExisting ? existing!.ListCount : listCount;
+            var effectiveRecCount = preserveExisting ? existing!.RecommendationCount : recCount;
+            var effectiveMatched = matchedHardcover || preserveExisting || (existing?.HardcoverId is not null);
+
+            if (matchedHardcover || preserveExisting || existing?.HardcoverId is not null)
+            {
+                matched++;
+            }
+
+            // aggregate recommendations
+            foreach (var rec in recsForUse)
+            {
+                var key = ExtractKey(rec.Book);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (!aggregator.TryGetValue(key, out var acc))
+                {
+                    acc = new RecAccumulatorSummary(rec.Book);
+                    aggregator[key] = acc;
+                }
+
+                acc.Count += rec.Occurrences;
+                acc.Reasons.AddRange(rec.Reasons);
+            }
+
+            // cache this book's result
+            if (!preserveExisting)
+            {
+                await cacheRepo.UpsertAsync(new HardcoverListCacheEntry(
+                    CalibreId: book.Id,
+                    CalibreTitle: book.Title,
+                    HardcoverId: result.HardcoverId,
+                    HardcoverTitle: result.HardcoverTitle,
+                    ListCount: listCount,
+                    RecommendationCount: recCount,
+                    LastCheckedUtc: DateTime.UtcNow,
+                    Status: matchedHardcover ? "ok" : "not_matched",
+                    BaseGenresJson: cacheRepo.Serialize(result.BaseGenres ?? Array.Empty<string>()),
+                    ListsJson: cacheRepo.Serialize(result.Lists),
+                    RecommendationsJson: cacheRepo.Serialize(result.Recommendations)
+                ), token);
+            }
+
+            var stepPayload = new
+            {
+                calibreId = book.Id,
+                title = book.Title,
+                isbn = book.Isbn,
+                matchedHardcover = effectiveMatched,
+                hardcoverBookId = effectiveHardcoverId,
+                hardcoverTitle = effectiveHardcoverTitle,
+                listsChecked = effectiveListCount,
+                recommendationsAdded = effectiveRecCount,
+                totalCalibreBooks
+            };
+            steps.Add(stepPayload);
+            await WriteEventAsync("step", stepPayload);
+
+            if (delay > 0)
+            {
+                try
+                {
+                    await Task.Delay(delay, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+
+        var recommendations = aggregator.Values
+            .OrderByDescending(x => x.Count)
+            .Select(x => new HardcoverListRecommendation(
+                x.Book,
+                x.Count,
+                x.Reasons.ToArray()))
+            .ToList();
+
+        var recommendationPayload = recommendations
+            .Select(r => new
+            {
+                book = r.Book,
+                occurrences = r.Occurrences,
+                reasons = r.Reasons,
+                base_genres = ExtractGenreTags(r.Book)
+            })
+            .ToList();
+
+        var suggestedEntries = recommendationPayload
+            .Select(r => new SuggestedEntry(
+                Book: r.book,
+                BaseGenres: r.base_genres,
+                Reasons: r.reasons,
+                SourceKey: ExtractKey(r.book)))
+            .ToList();
+        await suggestedRepo.UpsertMissingAsync(suggestedEntries, token);
+
+        await WriteEventAsync("summary", new
+        {
+            inspectedCalibreBooks = inspected,
+            matchedCalibreBooks = matched,
+            uniqueRecommendations = recommendationPayload.Count,
+            totalCalibreBooks,
+            recommendations = recommendationPayload,
+            steps
+        });
+    }
+    catch (Exception ex)
+    {
+        await WriteEventAsync("error", new { error = ex.Message, exception = ex.GetType().Name });
+    }
+
+    return Results.Empty;
+})
+.WithName("HardcoverCalibreRecommendationsStream");
+
+app.MapGet("/calibre/books", async (
+    int? take,
+    CalibreMirrorRepository mirrorRepo,
+    CalibreCoverService coverService,
+    CancellationToken cancellationToken) =>
+{
+    var takeBooks = Math.Clamp(take ?? 0, 0, int.MaxValue); // 0 = all
+    IReadOnlyList<CalibreMirrorBook> books = await mirrorRepo.GetBooksAsync(takeBooks, cancellationToken);
     var state = await mirrorRepo.GetSyncStateAsync(cancellationToken);
 
     string? libraryRoot = null;
@@ -478,7 +1094,189 @@ app.MapPost("/settings/calibre", async (CalibrePathRequest request, UserSettings
     return Results.Ok(new { path = fullPath, exists = true });
 });
 
-app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config) =>
+app.MapGet("/suggested", async (SuggestedRepository repo, CancellationToken cancellationToken) =>
+{
+    var items = await repo.GetAllAsync(cancellationToken);
+    return Results.Ok(new { count = items.Count, items });
+});
+
+app.MapGet("/suggested/ranked", async (SuggestedRepository repo, SuggestedRankingService ranking, CancellationToken cancellationToken) =>
+{
+    var items = await repo.GetAllAsync(cancellationToken);
+    var ranked = await ranking.RankAsync(items, cancellationToken);
+
+    var toDelete = ranked
+        .Where(r => r.MatchedByIsbn && r.CalibreId is not null)
+        .Select(r => r.SuggestedId)
+        .ToList();
+    if (toDelete.Count > 0)
+    {
+        await repo.DeleteByIdsAsync(toDelete, cancellationToken);
+        ranked = ranked.Where(r => !toDelete.Contains(r.SuggestedId)).ToList();
+    }
+
+    return Results.Ok(new
+    {
+        count = ranked.Count,
+            items = ranked.Select(r => new
+            {
+                id = r.SuggestedId,
+                book = r.Book,
+                baseGenres = r.BaseGenres,
+                reasons = r.Reasons,
+                matchScore = r.MatchScore,
+                authorMatches = r.AuthorMatches,
+                genreMatches = r.GenreMatches,
+                tagMatches = r.TagMatches,
+                titleBonusWords = r.TitleBonusWords,
+                sourceKey = r.SourceKey,
+                alreadyInCalibre = r.AlreadyInCalibre,
+                calibreId = r.CalibreId,
+                debug = r.DebugBreakdown
+            })
+    });
+});
+
+app.MapPost("/suggested/hide", async (SuggestedHideRequest request, SuggestedRepository repo, CancellationToken cancellationToken) =>
+{
+    var ids = request?.Ids?.Where(id => id > 0).Distinct().ToArray() ?? Array.Empty<int>();
+    if (ids.Length == 0)
+    {
+        return Results.BadRequest(new { error = "No valid ids provided." });
+    }
+
+    await repo.HideByIdsAsync(ids, cancellationToken);
+    return Results.Ok(new { hidden = ids.Length });
+});
+
+app.MapGet("/hardcover/list-cache/status", async (HardcoverListCacheRepository repo, CancellationToken cancellationToken) =>
+{
+    var entries = await repo.GetAllAsync(cancellationToken);
+    var total = entries.Count;
+    var withLists = entries.Count(e => e.ListCount > 0);
+    return Results.Ok(new { total, withLists });
+});
+
+app.MapPost("/hardcover/book/resolve", async (HardcoverResolveRequest request, IHttpClientFactory factory, IConfiguration config) =>
+{
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.BadRequest(new { error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey." });
+    }
+
+    static string? NormalizeIsbn(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var cleaned = new string(raw.Where(char.IsLetterOrDigit).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
+    }
+
+    var isbnRaw = NormalizeIsbn(request?.Isbn);
+    var bookId = request?.BookId;
+    if (string.IsNullOrWhiteSpace(isbnRaw) && bookId is null)
+    {
+        return Results.BadRequest(new { error = "isbn or bookId is required" });
+    }
+
+    var client = factory.CreateClient("hardcover");
+    const string isbnQuery = @"
+        query BookByIsbn($isbn: String!, $isbn10: String!) {
+          books(
+            where: {
+              _or: [
+                { isbn13: { _eq: $isbn } }
+                { isbn_13: { _eq: $isbn } }
+                { isbn10: { _eq: $isbn10 } }
+                { isbn_10: { _eq: $isbn10 } }
+              ]
+            }
+            limit: 1
+          ) {
+            id
+            slug
+            title
+            isbn13
+            isbn_13
+            isbn10
+            isbn_10
+            default_physical_edition { isbn_13 isbn_10 }
+            default_ebook_edition { isbn_13 isbn_10 }
+          }
+        }";
+
+    const string idQuery = @"
+        query BookById($id: Int!) {
+          books_by_pk(id: $id) {
+            id
+            slug
+            title
+            isbn13
+            isbn_13
+            isbn10
+            isbn_10
+            default_physical_edition { isbn_13 isbn_10 }
+            default_ebook_edition { isbn_13 isbn_10 }
+          }
+        }";
+
+    object BuildPayload()
+    {
+        if (bookId is not null)
+        {
+            return new { query = idQuery, variables = new { id = bookId.Value } };
+        }
+
+        // Best-effort ISBN-10 derivation; if not 10 digits, just reuse cleaned input.
+        string AsIsbn10(string cleaned)
+        {
+            if (cleaned.Length == 10) return cleaned;
+            if (cleaned.Length == 13) return cleaned[^10..];
+            return cleaned;
+        }
+
+        return new { query = isbnQuery, variables = new { isbn = isbnRaw, isbn10 = AsIsbn10(isbnRaw!) } };
+    }
+
+    var payload = BuildPayload();
+
+    var response = await client.PostAsJsonAsync("", payload);
+    if (!response.IsSuccessStatusCode)
+    {
+        return await ForwardHardcoverError(response, "resolve-book");
+    }
+
+    using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+    if (doc is null || !doc.RootElement.TryGetProperty("data", out var data) ||
+        (!data.TryGetProperty("books", out var booksEl) && !data.TryGetProperty("books_by_pk", out booksEl)))
+    {
+        return Results.NotFound(new { error = "Book not found by ISBN." });
+    }
+
+    if (booksEl.ValueKind == JsonValueKind.Null)
+    {
+        return Results.NotFound(new { error = "Book not found by ISBN." });
+    }
+
+    var book = booksEl.ValueKind == JsonValueKind.Array
+        ? booksEl[0]
+        : booksEl;
+    static string? ReadString(JsonElement el, string property)
+    {
+        if (!el.TryGetProperty(property, out var child)) return null;
+        return child.ValueKind switch
+        {
+            JsonValueKind.String => child.GetString(),
+            JsonValueKind.Number => child.GetRawText(),
+            _ => null
+        };
+    }
+
+    var id = ReadString(book, "id");
+    var slug = ReadString(book, "slug");
+    return Results.Ok(new { id, slug });
+});
+
+app.MapPost("/hardcover/want-to-read/check", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config) =>
 {
     if (string.IsNullOrWhiteSpace(request.BookId))
     {
@@ -494,78 +1292,161 @@ app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest reques
     }
 
     var client = factory.CreateClient("hardcover");
-
-    if (request.WantToRead)
+    var isInt = int.TryParse(request.BookId, out var intId);
+    if (!isInt)
     {
-        const string updateMutation = @"
-            mutation SetWantToRead($bookId: uuid!) {
-              update_user_books(
-                where: { book_id: { _eq: $bookId } }
-                _set: { status_id: 1 }
-              ) {
-                affected_rows
+        return Results.BadRequest(new { error = "bookId must be an integer Hardcover book id." });
+    }
+
+    var queries = new[]
+    {
+        @"
+            query CheckWantToReadInt($bookId: Int!) {
+              me {
+                user_book(where: { book_id: { _eq: $bookId }, status_id: { _eq: 1 } }) {
+                  book_id
+                  status_id
+                  date_added
+                }
+              }
+            }",
+        @"
+            query CheckWantToReadIntPlural($bookId: Int!) {
+              me {
+                user_books(where: { book_id: { _eq: $bookId }, status_id: { _eq: 1 } }) {
+                  book_id
+                  status_id
+                  date_added
+                }
+              }
+            }"
+    };
+
+    var variables = new { bookId = (object)intId };
+
+    HttpResponseMessage? lastResponse = null;
+    foreach (var query in queries)
+    {
+        var response = await client.PostAsJsonAsync("", new { query, variables });
+        lastResponse = response;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            continue;
+        }
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        if (HasGraphQlErrors(doc))
+        {
+            continue;
+        }
+
+        var exists = ExistsInUserBooks(doc);
+        return Results.Ok(new { exists, raw = doc });
+    }
+
+    return await ForwardHardcoverError(lastResponse!, "want-to-read:check");
+});
+
+app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config, HttpContext httpContext) =>
+{
+    var incomingBookId =
+    request.BookId ??
+    (request.BookIdAlt?.ToString());
+    if (string.IsNullOrWhiteSpace(incomingBookId))
+    {
+        return Results.BadRequest(new { error = "bookId is required" });
+    }
+
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.BadRequest(new
+        {
+            error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey."
+        });
+    }
+
+    bool isInt = int.TryParse(incomingBookId, out var intId);
+    if (!isInt)
+    {
+        return Results.BadRequest(new { error = "bookId must be an integer Hardcover book id." });
+    }
+
+    var client = factory.CreateClient("hardcover");
+    var mutationVariables = new { bookId = (object)intId };
+    var debug = string.Equals(httpContext.Request.Query["debug"], "1", StringComparison.OrdinalIgnoreCase);
+
+    var shouldWant = request.WantToRead ?? (request.StatusId == 1);
+    if (shouldWant)
+    {
+        var mutation = @"
+            mutation addBook($bookId: Int!) {
+              insert_user_book(object: { book_id: $bookId, status_id: 1 }) {
+                id
               }
             }";
 
-        var updateResponse = await client.PostAsJsonAsync("", new
+        var response = await client.PostAsJsonAsync("", new
         {
-            query = updateMutation,
-            variables = new { bookId = request.BookId }
+            query = mutation,
+            variables = mutationVariables
         });
 
-        if (!updateResponse.IsSuccessStatusCode)
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
         {
-            return await ForwardHardcoverError(updateResponse, "want-to-read:update");
+            return Results.Problem(
+                title: "Hardcover addBook failed",
+                detail: string.IsNullOrWhiteSpace(body) ? null : body,
+                statusCode: (int)response.StatusCode,
+                extensions: debug
+                    ? new Dictionary<string, object?>
+                    {
+                        ["mutation"] = mutation,
+                        ["variables"] = mutationVariables,
+                        ["raw"] = body
+                    }
+                    : null);
         }
 
-        using var updateDoc = await updateResponse.Content.ReadFromJsonAsync<JsonDocument>();
-        var affected = ExtractAffectedRows(updateDoc, "update_user_books");
-
-        if (affected == 0)
+        JsonDocument? doc = null;
+        try
         {
-            const string insertMutation = @"
-                mutation InsertWantToRead($bookId: uuid!) {
-                  insert_user_books_one(object: { book_id: $bookId, status_id: 1 }) {
-                    status_id
-                  }
-                }";
+            doc = JsonDocument.Parse(body);
+        }
+        catch
+        {
+            // ignore parse errors; fall back to raw body
+        }
 
-            var insertResponse = await client.PostAsJsonAsync("", new
+        if (HasGraphQlErrors(doc))
+        {
+            var errors = ExtractGraphQlErrors(doc);
+            if (IsUniqueConflict(errors))
             {
-                query = insertMutation,
-                variables = new { bookId = request.BookId }
-            });
-
-            if (!insertResponse.IsSuccessStatusCode)
-            {
-                return await ForwardHardcoverError(insertResponse, "want-to-read:insert");
+                return Results.Ok(new { status = "ok", method = "insert", note = "already_exists" });
             }
+
+            return Results.Problem(
+                title: "Hardcover addBook failed",
+                detail: string.IsNullOrWhiteSpace(errors) ? body : errors,
+                statusCode: StatusCodes.Status400BadRequest,
+                extensions: debug
+                    ? new Dictionary<string, object?>
+                    {
+                        ["mutation"] = mutation,
+                        ["variables"] = mutationVariables,
+                        ["raw"] = body,
+                        ["errors"] = errors
+                    }
+                    : null);
         }
 
-        return Results.Ok(new { status = "ok" });
+        return Results.Ok(new { status = "ok", method = "insert" });
     }
 
-    const string deleteMutation = @"
-        mutation RemoveWantToRead($bookId: uuid!) {
-          delete_user_books(
-            where: { book_id: { _eq: $bookId }, status_id: { _eq: 1 } }
-          ) {
-            affected_rows
-          }
-        }";
-
-    var deleteResponse = await client.PostAsJsonAsync("", new
-    {
-        query = deleteMutation,
-        variables = new { bookId = request.BookId }
-    });
-
-    if (!deleteResponse.IsSuccessStatusCode)
-    {
-        return await ForwardHardcoverError(deleteResponse, "want-to-read:remove");
-    }
-
-    return Results.Ok(new { status = "ok" });
+    // Per latest requirement, only sync additions to Hardcover.
+    return Results.Ok(new { status = "skipped", reason = "remove_not_synced" });
 })
 .WithName("SetHardcoverWantStatus");
 
@@ -617,8 +1498,26 @@ record OpenLibraryDoc
 }
 
 record HardcoverWantRequest(
-    [property: JsonPropertyName("bookId")] string BookId,
-    [property: JsonPropertyName("wantToRead")] bool WantToRead);
+    [property: JsonPropertyName("bookId")] string? BookId,
+    [property: JsonPropertyName("book_id")] int? BookIdAlt,
+    [property: JsonPropertyName("status_id")] int? StatusId,
+    [property: JsonPropertyName("wantToRead")] bool? WantToRead);
+
+record HardcoverResolveRequest(
+    [property: JsonPropertyName("isbn")] string? Isbn,
+    [property: JsonPropertyName("bookId")] int? BookId);
 
 record CalibrePathRequest(
     [property: JsonPropertyName("path")] string? Path);
+
+class RecAccumulatorSummary
+{
+    public RecAccumulatorSummary(JsonElement book)
+    {
+        Book = book;
+    }
+
+    public JsonElement Book { get; }
+    public int Count { get; set; }
+    public List<HardcoverListReason> Reasons { get; } = new();
+}

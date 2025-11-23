@@ -5,6 +5,46 @@
       "PackagePath": "staticwebassets/index.html"
     },
     {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/calibre.js",
+      "PackagePath": "staticwebassets/js/calibre.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/hardcover.js",
+      "PackagePath": "staticwebassets/js/hardcover.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js",
+      "PackagePath": "staticwebassets/js/main.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js.bak",
+      "PackagePath": "staticwebassets/js/main.js.bak"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search-authors.js",
+      "PackagePath": "staticwebassets/js/search-authors.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search-books.js",
+      "PackagePath": "staticwebassets/js/search-books.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search-isbn.js",
+      "PackagePath": "staticwebassets/js/search-isbn.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search.js",
+      "PackagePath": "staticwebassets/js/search.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/suggested.js",
+      "PackagePath": "staticwebassets/js/suggested.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/site.css",
+      "PackagePath": "staticwebassets/site.css"
+    },
+    {
       "Id": "obj/Debug/net8.0/staticwebassets/msbuild.Bookworm.Microsoft.AspNetCore.StaticWebAssets.props",
       "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
     },
