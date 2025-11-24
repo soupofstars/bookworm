@@ -7,23 +7,66 @@
   </p>
 </div>
 
-## ✨ Features
+# Bookworm
 
-- **Search Books, Authors, ISBNs** via Open Library with match/weak/suggested groupings.
-- **Library & Wanted Shelves** to keep quick lists (in-memory for now).
-- **Hardcover "Want to Read" integration** using your personal API key.
-- **Hardcover people-list picks** surfaced from your Calibre titles (find what other readers list alongside your books).
-- **Modern UI** with card layout, hoverable covers, lightbox previews, and expandable author chips linking to the in-app author search.
+Bookworm is a **Readarr-inspired book companion** that helps you discover, track, and manage books you want to read.  
+It’s powered by **Open Library** for discovery/search and **Hardcover** for personal “Want to Read” list integration, with **Calibre** library syncing.
 
+> Bookworm is **not a downloader and does not directly intergrate with a downloader**.
+> If you want automated downloads, use Calibre’s own web/automation plugins alongside Bookworm.
 
-### Calibre metadata (SQLite)
+---
 
-Bookworm can read directly from Calibre’s `metadata.db` (a SQLite database). Point the app at that file by editing `Calibre:DatabasePath`.
+## What Bookworm Does
 
-- Local dev: set the absolute path, e.g. `/Users/you/Calibre Library/metadata.db`.
-- Docker: bind-mount the folder and point the env var at the mounted location (see the example below). Without the volume mount, the container cannot see your host’s SQLite database.
-- After configuring the path, open the Calibre tab and click **Sync Calibre** to mirror the library into Bookworm’s local database.
-- Currently tested with version 8.4.0
+- **Discover books** via Open Library:
+  - Search by **title**, **author**, or **ISBN**
+  - View results in a modern, card-based UI with cover art
+- **Manage a Wanted list** (books you’re looking for / planning to read)
+- **Hardcover “Want to Read” integration**:
+  - Sync your personal Hardcover “Want to Read” shelf using your own API key
+  - Hardcover is also used to enrich metadata and suggestions (the internal ranking logic is intentionally not exposed)
+- **Calibre integration**:
+  - Reads directly from your Calibre **metadata.db**
+  - Lets Bookworm understand what you already own so you don’t re-want duplicates
+
+---
+
+## Key Features
+
+- 🔎 **Fast search** by author / ISBN through Open Library  
+- 📚 **Wanted list** for books you plan to get/read  
+- 🔗 **Hardcover shelf sync** (personal “Want to Read”)  
+- 🗂️ **Calibre library awareness**  
+- 🧼 **Clean, modern UI** using responsive cards and cover images  
+
+---
+
+## Requirements
+
+- **Hardcover API key is required** for full functionality.  
+  Without it, Hardcover shelf sync and enrichment won’t work.
+- **Internet access** for Open Library + Hardcover queries
+- **Optional:** Calibre installed locally (only if you want library sync)
+
+---
+
+## Configuration
+
+Bookworm looks for the following configuration (environment variables or `appsettings.json`, depending on your setup):
+
+- `Hardcover__ApiKey` – **required**  
+- `Hardcover__Endpoint` – optional (defaults to Hardcover GraphQL endpoint)
+- `OpenLibrary__Endpoint` – optional (defaults to Open Library API)
+- `Calibre__MetadataPath` – optional path to Calibre `metadata.db`
+
+Example `.env`:
+
+```env
+Hardcover__ApiKey=YOUR_KEY_HERE
+Hardcover__Endpoint=https://api.hardcover.app/v1/graphql
+OpenLibrary__Endpoint=https://openlibrary.org
+Calibre__MetadataPath=/path/to/Calibre/metadata.db
 
 ### Docker
 
@@ -45,15 +88,6 @@ docker run -d \
 | --- | --- |
 | `Hardcover:ApiKey` / `Hardcover__ApiKey` | Personal Hardcover token (required for Hardcover tab). |
 | `Calibre:DatabasePath` | Full path to your Calibre `metadata.db` for local sync. |
-
-
-
-
-## 🛣️ Roadmap
-
-- Calibre sync API.
-- Offline cache.
-- Automated tests / CI.
 
 ## 🤝 Contributing
 
