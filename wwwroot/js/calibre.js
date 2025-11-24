@@ -5,11 +5,17 @@
     const statusEl = document.getElementById('calibre-status');
     const resultsEl = document.getElementById('calibre-results');
     const syncBtn = document.getElementById('btn-calibre-sync');
+    const searchInput = document.getElementById('calibre-search-input');
+    const searchClear = document.getElementById('calibre-search-clear');
     if (!statusEl || !resultsEl) return;
 
     let loaded = false;
     let loading = false;
     let syncing = false;
+    let searchQuery = '';
+    let lastSyncText = '';
+    let allBooks = [];
+    const searchCache = new WeakMap();
 
     function toArray(value) {
         if (Array.isArray(value)) return value;
@@ -65,6 +71,90 @@
             return copy;
         };
 
+    function buildSearchKey(book) {
+        if (!book) return '';
+        if (searchCache.has(book)) {
+            return searchCache.get(book);
+        }
+        const parts = [];
+        const push = (val) => {
+            if (!val) return;
+            if (Array.isArray(val)) {
+                val.forEach(push);
+                return;
+            }
+            if (typeof val === 'object') return;
+            const str = String(val).trim();
+            if (str) parts.push(str.toLowerCase());
+        };
+
+        push(book.title);
+        push(book.slug);
+        push(book.author);
+        push(book.authors);
+        push(book.author_names);
+        push(book.series);
+        push(book.publisher);
+        push(book.tags);
+        push(book.genre);
+        push(book.base_genres);
+        push(book.formats);
+        if (typeof book.cached_tags === 'string') {
+            push(book.cached_tags);
+        } else if (Array.isArray(book.cached_tags)) {
+            book.cached_tags.forEach(push);
+        }
+        const isbn = (book.isbn13 || book.isbn10 || '').trim();
+        if (isbn) push(isbn);
+
+        const text = parts.join(' ');
+        searchCache.set(book, text);
+        return text;
+    }
+
+    function matchesQuery(book, normalizedQuery) {
+        if (!normalizedQuery) return true;
+        return buildSearchKey(book).includes(normalizedQuery);
+    }
+
+    function renderBooks() {
+        if (!allBooks.length) return;
+        resultsEl.innerHTML = '';
+        const rawQuery = searchQuery || '';
+        const normalizedQuery = rawQuery.trim().toLowerCase();
+        const visible = normalizedQuery
+            ? allBooks.filter(book => matchesQuery(book, normalizedQuery))
+            : allBooks;
+
+        if (!visible.length) {
+            statusEl.textContent = rawQuery
+                ? `No matches for "${rawQuery.trim()}". ${lastSyncText}`
+                : `No books found in Calibre mirror. ${lastSyncText}`;
+            return;
+        }
+
+        let rendered = 0;
+        visible.forEach(book => {
+            try {
+                resultsEl.appendChild(app.createBookCard(book, {
+                    showWanted: false,
+                    showAddToLibrary: false,
+                    enableViewLink: false
+                }));
+                rendered += 1;
+            } catch (err) {
+                console.error('Failed to render Calibre book', book, err);
+            }
+        });
+
+        const prefix = normalizedQuery
+            ? `Showing ${rendered} of ${allBooks.length} Calibre book(s).`
+            : `Calibre library: showing ${rendered} of ${allBooks.length} book(s).`;
+        statusEl.textContent = lastSyncText
+            ? `${prefix} ${lastSyncText}`
+            : prefix;
+    }
+
     async function loadCalibreBooks() {
         if (loading) return;
         loading = true;
@@ -87,6 +177,9 @@
                 : 'Not synced yet.';
 
             if (!books.length) {
+                allBooks = [];
+                lastSyncText = syncInfo;
+                loaded = true;
                 statusEl.textContent = data?.lastSync
                     ? 'No books in Calibre mirror. Click “Sync Calibre” to refresh.'
                     : 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
@@ -98,24 +191,14 @@
                 return;
             }
 
-            let rendered = 0;
-            books.forEach(book => {
-                try {
-                    resultsEl.appendChild(app.createBookCard(normalizeCalibreBook(book), {
-                        showWanted: false,
-                        showAddToLibrary: false,
-                        enableViewLink: false
-                    }));
-                    rendered += 1;
-                } catch (err) {
-                    console.error('Failed to render Calibre book', book, err);
-                }
-            });
-            statusEl.textContent = `Calibre library: showing ${rendered} of ${books.length} book(s). ${syncInfo}`;
+            const normalized = books.map(normalizeCalibreBook);
+            allBooks = normalized;
+            lastSyncText = syncInfo;
+            loaded = true;
+            renderBooks();
             if (typeof app.setLibraryFromCalibre === 'function') {
                 app.setLibraryFromCalibre(books, syncInfo);
             }
-            loaded = true;
         } catch (err) {
             console.error('Failed to load Calibre library', err);
             statusEl.textContent = 'Error loading Calibre library.';
@@ -161,6 +244,21 @@
 
     if (syncBtn) {
         syncBtn.addEventListener('click', syncCalibreLibrary);
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (event) => {
+            searchQuery = event.target.value || '';
+            renderBooks();
+        });
+    }
+    if (searchClear && searchInput) {
+        searchClear.addEventListener('click', () => {
+            searchInput.value = '';
+            searchQuery = '';
+            renderBooks();
+            searchInput.focus();
+        });
     }
 
     document.addEventListener('DOMContentLoaded', () => {

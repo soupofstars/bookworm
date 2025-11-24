@@ -320,8 +320,16 @@ body {
     letter-spacing: 0.04em;
 }
 .book-pill-value {
-    font-size: 0.72rem;
+    font-size: 0.55rem;
     color: #f9fafb;
+}
+.book-pill--nolabel {
+    justify-content: center;
+    text-align: center;
+}
+.book-pill--nolabel .book-pill-value {
+    width: 100%;
+    text-align: center;
 }
 .book-actions.book-pill {
     padding: 0.45rem 0.7rem;   /* same as .book-pill */
@@ -506,6 +514,50 @@ body {
     font-weight: 600;
     color: var(--text);
 }
+.book-source-link {
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+}
+.book-source-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+.btn-remove-wanted {
+    color: var(--text);
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+    text-decoration: none;
+}
+.btn-remove-wanted:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+.suggested-group .btn-wanted {
+    color: var(--text);
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+    text-decoration: none;
+}
+.suggested-group .btn-wanted:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+.suggested-group .book-actions {
+    background: rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 0.45rem 0.7rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.book-pill--compact {
+    width: auto;
+    min-width: 160px;
+    align-self: flex-start;
+}
 
 .settings-card {
     border: 1px solid var(--border);
@@ -684,10 +736,7 @@ body {
 }
 .btn-ghost {
     background: transparent;
-    color: var(--text-muted);
-}
-.book-actions {
-    margin-top: 0.6rem;
+    color: #ffffff;
 }
 .btn-view {
     display: inline-flex;

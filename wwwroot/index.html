@@ -131,6 +131,12 @@
                         <h1>Your bookshelf</h1>
                         <p>Books you already own / have in your collection.</p>
                     </div>
+                    <div class="section-actions">
+                        <div class="suggested-search library-search">
+                            <input id="library-search-input" type="text" placeholder="Search bookshelf (title, author, ISBN, tag)" />
+                            <button id="library-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="library-status" class="status">No books on your bookshelf yet.</div>
@@ -144,6 +150,12 @@
                         <h1>Wanted</h1>
                         <p>Local wanted list – books you’d like to get. Promote them to your library when you own them.</p>
                     </div>
+                    <div class="section-actions">
+                        <div class="suggested-search wanted-search">
+                            <input id="wanted-search-input" type="text" placeholder="Search wanted (title, author, ISBN, tag)" />
+                            <button id="wanted-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="wanted-status" class="status">No wanted books yet.</div>
@@ -156,6 +168,12 @@
                     <div>
                         <h1>Hardcover.app</h1>
                         <p>Books you’ve marked as “Want to read” on Hardcover.</p>
+                    </div>
+                    <div class="section-actions">
+                        <div class="suggested-search hardcover-search">
+                            <input id="hardcover-search-input" type="text" placeholder="Search want to read (title, author, ISBN, tag)" />
+                            <button id="hardcover-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
                     </div>
                 </div>
 
@@ -172,6 +190,10 @@
                         <p>Calibre-specific library information will live here.</p>
                     </div>
                     <div class="section-actions">
+                        <div class="suggested-search calibre-search">
+                            <input id="calibre-search-input" type="text" placeholder="Search Calibre (title, author, ISBN, tag)" />
+                            <button id="calibre-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
                         <button id="btn-calibre-sync" class="btn btn-primary">Sync Calibre</button>
                     </div>
                 </div>

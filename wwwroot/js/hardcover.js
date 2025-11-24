@@ -4,10 +4,14 @@
 
     const statusEl = document.getElementById('hardcover-wanted-status');
     const resultsEl = document.getElementById('hardcover-wanted-results');
+    const searchInput = document.getElementById('hardcover-search-input');
+    const searchClear = document.getElementById('hardcover-search-clear');
     let loaded = false;
     let loading = false;
     let cachedBooks = [];
     let lastLoadPromise = null;
+    let searchQuery = '';
+    const searchCache = new WeakMap();
 
     function coerceArray(value) {
         if (Array.isArray(value)) return value;
@@ -101,6 +105,83 @@
         return normalized;
     }
 
+    function buildSearchKey(book) {
+        if (!book) return '';
+        if (searchCache.has(book)) {
+            return searchCache.get(book);
+        }
+        const parts = [];
+        const push = (val) => {
+            if (!val) return;
+            if (Array.isArray(val)) {
+                val.forEach(push);
+                return;
+            }
+            if (typeof val === 'object') return;
+            const str = String(val).trim();
+            if (str) parts.push(str.toLowerCase());
+        };
+
+        push(book.title);
+        push(book.slug);
+        push(book.author);
+        push(book.authors);
+        push(book.author_names);
+        push(book.series);
+        push(book.publisher);
+        push(book.tags);
+        push(book.genre);
+        if (Array.isArray(book.cached_contributors)) {
+            book.cached_contributors.forEach(c => push(c?.name));
+        }
+        if (Array.isArray(book.contributions)) {
+            book.contributions.forEach(c => push(c?.author?.name));
+        }
+        const isbn = cleanIsbn(book.isbn13 || book.isbn10 || '');
+        if (isbn) push(isbn);
+
+        const text = parts.join(' ');
+        searchCache.set(book, text);
+        return text;
+    }
+
+    function matchesQuery(book, normalizedQuery) {
+        if (!normalizedQuery) return true;
+        return buildSearchKey(book).includes(normalizedQuery);
+    }
+
+    function renderBooks() {
+        resultsEl.innerHTML = '';
+        const total = cachedBooks.length;
+        if (!total) {
+            statusEl.textContent = loaded
+                ? 'No “want to read” books on Hardcover yet.'
+                : statusEl.textContent;
+            return;
+        }
+
+        const rawQuery = searchQuery || '';
+        const normalizedQuery = rawQuery.trim().toLowerCase();
+        const visible = normalizedQuery
+            ? cachedBooks.filter(book => matchesQuery(book, normalizedQuery))
+            : cachedBooks;
+
+        if (!visible.length) {
+            statusEl.textContent = rawQuery
+                ? `No matches for "${rawQuery.trim()}".`
+                : 'No “want to read” books on Hardcover yet.';
+            return;
+        }
+
+        visible.forEach(book => {
+            resultsEl.appendChild(app.createBookCard(book));
+        });
+
+        statusEl.textContent = normalizedQuery
+            ? `Showing ${visible.length} of ${total} “want to read” book(s) on Hardcover.`
+            : `You have ${total} “want to read” book(s) on Hardcover.`;
+    }
+
     function loadHardcoverWanted(forceReload = false) {
         if (loading && lastLoadPromise) {
             return lastLoadPromise;
@@ -136,28 +217,18 @@
                 const userBooks = firstUser?.user_books ?? firstUser?.user_book ?? [];
 
                 cachedBooks = [];
-                if (!userBooks.length) {
-                    statusEl.textContent = 'No “want to read” books on Hardcover yet.';
-                    loaded = true;
-                    cachedBooks = [];
-                    if (typeof app.handleHardcoverWantedBooks === 'function') {
-                        app.handleHardcoverWantedBooks(cachedBooks);
-                    }
-                    return cachedBooks;
+                if (userBooks.length) {
+                    userBooks.forEach(entry => {
+                        const book = entry.book;
+                        if (!book) return;
+                        const normalized = normalizeHardcoverBook(book);
+                        cachedBooks.push(normalized);
+                    });
                 }
 
-                statusEl.textContent = `You have ${userBooks.length} “want to read” book(s) on Hardcover.`;
-                resultsEl.innerHTML = '';
-
-                userBooks.forEach(entry => {
-                    const book = entry.book;
-                    if (!book) return;
-                    const normalized = normalizeHardcoverBook(book);
-                    cachedBooks.push(normalized);
-                    resultsEl.appendChild(app.createBookCard(normalized));
-                });
-
                 loaded = true;
+                renderBooks();
+
                 if (typeof app.handleHardcoverWantedBooks === 'function') {
                     app.handleHardcoverWantedBooks(cachedBooks);
                 }
@@ -190,4 +261,19 @@
         },
         normalizeBook: normalizeHardcoverBook
     };
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (event) => {
+            searchQuery = event.target.value || '';
+            renderBooks();
+        });
+    }
+    if (searchClear && searchInput) {
+        searchClear.addEventListener('click', () => {
+            searchInput.value = '';
+            searchQuery = '';
+            renderBooks();
+            searchInput.focus();
+        });
+    }
 })();
