@@ -80,6 +80,10 @@
                     </form>
 
                     <div class="status search-status">Ready.</div>
+                    <div class="search-history search-history-inline hidden">
+                        <div class="search-history-title">Recent searches</div>
+                        <div class="search-history-list"></div>
+                    </div>
                     <div class="search-results"></div>
                 </div>
             </div>
@@ -132,6 +136,12 @@
                         <p>Books you already own / have in your collection.</p>
                     </div>
                     <div class="section-actions">
+                        <select id="library-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <div class="suggested-search library-search">
                             <input id="library-search-input" type="text" placeholder="Search bookshelf (title, author, ISBN, tag)" />
                             <button id="library-search-clear" class="btn btn-ghost" title="Clear search">×</button>

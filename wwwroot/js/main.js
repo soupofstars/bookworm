@@ -4,6 +4,7 @@
         libraryLoading: false,
         libraryLoaded: false,
         librarySyncText: '',
+        librarySort: 'title-asc',
         librarySearchQuery: '',
         wanted: [],
         wantedLoading: false,
@@ -16,6 +17,7 @@
     const hardcoverIdCache = new Map();
     const wantedSearchCache = new WeakMap();
     const librarySearchCache = new WeakMap();
+    const hardcoverImageCache = new Map();
 
     const sections = {
         'discover-books': document.getElementById('section-discover-books'),
@@ -39,6 +41,7 @@
         topbarTitle: document.getElementById('topbar-title'),
         libraryStatus: document.getElementById('library-status'),
         libraryResults: document.getElementById('library-results'),
+        librarySortSelect: document.getElementById('library-sort'),
         librarySearchInput: document.getElementById('library-search-input'),
         librarySearchClear: document.getElementById('library-search-clear'),
         wantedStatus: document.getElementById('wanted-status'),
@@ -277,8 +280,10 @@
 
     function formatSourceValue(book, detailsUrl) {
         const label = formatSourceLabel(book);
-        const isHardcover = (book && book.source || '').toString().toLowerCase().includes('hardcover');
-        if (isHardcover && detailsUrl) {
+        const sourceRaw = (book && book.source) ? String(book.source).toLowerCase() : '';
+        const isHardcover = sourceRaw.includes('hardcover');
+        const isOpenLibrary = sourceRaw.includes('openlibrary');
+        if ((isHardcover || isOpenLibrary) && detailsUrl) {
             const safeUrl = escapeHtml(detailsUrl);
             const safeLabel = escapeHtml(label);
             return `<a class="book-source-link" href="${safeUrl}" target="_blank" rel="noreferrer">${safeLabel}</a>`;
@@ -296,7 +301,9 @@
                 enableViewLink: true,
                 matchScore: null,
                 matchScoreLabel: null,
-                onRemoveFromWanted: null
+                onRemoveFromWanted: null,
+                sourceInRightPill: false,
+                showIsbnInline: false
             },
             options || {});
         const key = bookKey(book);
@@ -329,6 +336,23 @@
                 coverUrl = contributorImage.url;
             }
         }
+        if (!coverUrl) {
+            const isbnCandidate = (book.isbn13 || book.isbn_13 || book.isbn || book.isbn10 || book.isbn_10);
+            const normalizedIsbn = Array.isArray(isbnCandidate)
+                ? (isbnCandidate.find(Boolean) || '')
+                : (isbnCandidate || '');
+            const cleanIsbn = normalizedIsbn.replace(/[^0-9Xx]/g, '');
+            if (cleanIsbn.length >= 10) {
+                coverUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-M.jpg`;
+            }
+        }
+        const isbnFallback = extractIsbnCandidate(book);
+        const googleCover = isbnFallback
+            ? `https://books.google.com/books/content?vid=ISBN${isbnFallback}&printsec=frontcover&img=1&zoom=1`
+            : null;
+        if (!coverUrl && googleCover) {
+            coverUrl = googleCover;
+        }
 
         const ratingRaw = book.rating ?? book.ratings_average ?? book.average_rating;
         const rating = typeof ratingRaw === 'number'
@@ -354,6 +378,10 @@
         let viewLinkForActions = viewLink;
         if (opts.useWantedLayout) {
             // Wanted layout surfaces source and action pills; drop extra view button.
+            viewLinkForActions = '';
+        }
+        // Drop view button when source pill renders a link (e.g., Open Library/Hardcover).
+        if (detailsUrl && (book.source === 'openlibrary' || (book.source && String(book.source).toLowerCase().includes('hardcover')))) {
             viewLinkForActions = '';
         }
 
@@ -395,6 +423,12 @@
         const isbnValue = isbnDisplay && isbnDisplay !== 'N/A'
             ? `<button class="isbn-link" data-isbn="${isbnDisplay.replace(/"/g, '&quot;')}">${isbnDisplay}</button>`
             : isbnDisplay;
+        const nonCalibreIsbnLine = (!isCalibre && opts.showIsbnInline && isbnDisplay && isbnDisplay !== 'N/A')
+            ? `
+                <div class="book-info-label book-isbn-label">ISBN</div>
+                <div class="book-isbn-inline isbn-inline">${escapeHtml(isbnDisplay)}</div>
+              `
+            : '';
 
         const rightPills = (() => {
             if (opts.useWantedLayout) {
@@ -418,6 +452,9 @@
                     { label: 'Publisher:', value: publisher },
                     { label: 'Series:', value: series }
                 ];
+            }
+            if (opts.sourceInRightPill) {
+                return [{ label: 'Source:', value: formatSourceValue(book, detailsUrl) }];
             }
             return [{ label: 'ISBN:', value: isbnValue }];
         })();
@@ -474,6 +511,7 @@
                 <div class="book-info-label">Authors</div>
                 ${authorsMarkup}
                 ${calibreIsbnLine}
+                ${nonCalibreIsbnLine}
             </div>
             ${isbnInlineBlock}
         `;
@@ -507,6 +545,11 @@ div.innerHTML = `
                 slug: book.slug,
                 description: book.description
             }));
+            if (googleCover && googleCover !== coverUrl && coverEl.tagName === 'IMG') {
+                coverEl.addEventListener('error', () => {
+                    coverEl.setAttribute('src', googleCover);
+                }, { once: true });
+            }
         }
 
         const wantedBtn = div.querySelector('.btn-wanted-action');
@@ -1206,6 +1249,43 @@ div.innerHTML = `
         return librarySearchKey(book).includes(normalizedQuery);
     }
 
+    function primaryAuthor(book) {
+        const authors = Array.isArray(book.author_names) && book.author_names.length
+            ? book.author_names
+            : Array.isArray(book.authors) && book.authors.length
+                ? book.authors
+                : [];
+        return authors.length ? authors[0] : '';
+    }
+
+    function sortLibraryList(list, sortKey) {
+        const arr = Array.isArray(list) ? list.slice() : [];
+        const byString = (getter, direction) => (a, b) => {
+            const av = getter(a).toLowerCase();
+            const bv = getter(b).toLowerCase();
+            if (av === bv) return 0;
+            return direction === 'asc' ? (av < bv ? -1 : 1) : (av > bv ? -1 : 1);
+        };
+        const byNumber = (getter, direction) => (a, b) => {
+            const av = getter(a);
+            const bv = getter(b);
+            if (av === bv) return 0;
+            return direction === 'asc' ? (av - bv) : (bv - av);
+        };
+
+        switch (sortKey) {
+            case 'title-desc':
+                return arr.sort(byString(b => b.title || '', 'desc'));
+            case 'author-asc':
+                return arr.sort(byString(primaryAuthor, 'asc'));
+            case 'author-desc':
+                return arr.sort(byString(primaryAuthor, 'desc'));
+            case 'title-asc':
+            default:
+                return arr.sort(byString(b => b.title || '', 'asc'));
+        }
+    }
+
     function setLibrarySearchQuery(raw) {
         state.librarySearchQuery = (raw || '').trim();
         renderLibrary();
@@ -1263,8 +1343,9 @@ div.innerHTML = `
         const visible = normalizedQuery
             ? state.library.filter(book => libraryMatchesQuery(book, normalizedQuery))
             : state.library;
+        const sorted = sortLibraryList(visible, state.librarySort);
 
-        if (!visible.length) {
+        if (!sorted.length) {
             const suffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
             libraryStatus.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}".${suffix ? ` ${suffix}` : ''}`
@@ -1272,9 +1353,9 @@ div.innerHTML = `
             return;
         }
 
-        applyLibraryCountStatus(visible.length, rawQuery);
+        applyLibraryCountStatus(sorted.length, rawQuery);
 
-        visible.forEach(book => {
+        sorted.forEach(book => {
             libraryResults.appendChild(createBookCard(book, {
                 showWanted: false,
                 showAddToLibrary: false,
@@ -1509,6 +1590,14 @@ div.innerHTML = `
             refs.librarySearchInput.value = '';
             setLibrarySearchQuery('');
             refs.librarySearchInput.focus();
+        });
+    }
+    if (refs.librarySortSelect) {
+        refs.librarySortSelect.value = state.librarySort;
+        refs.librarySortSelect.addEventListener('change', (event) => {
+            const value = event.target.value || 'title-asc';
+            state.librarySort = value;
+            renderLibrary();
         });
     }
 

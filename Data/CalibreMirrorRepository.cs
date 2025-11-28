@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -22,6 +23,11 @@ public record CalibreMirrorBook(
     string? CoverUrl);
 
 public record CalibreSyncState(string? CalibrePath, DateTime? LastSnapshot);
+public record CalibreMirrorReplaceResult(
+    IReadOnlyList<int> NewIds,
+    IReadOnlyList<int> RemovedIds,
+    int TotalCount,
+    DateTime Snapshot);
 
 public class CalibreMirrorRepository
 {
@@ -90,10 +96,17 @@ public class CalibreMirrorRepository
         EnsureColumn(conn, "calibre_books", "updated_at", "TEXT");
     }
 
-    public async Task ReplaceAllAsync(IEnumerable<CalibreMirrorBook> books, string? sourcePath, DateTime snapshot, CancellationToken cancellationToken = default)
+    public async Task<CalibreMirrorReplaceResult> ReplaceAllAsync(IEnumerable<CalibreMirrorBook> books, string? sourcePath, DateTime snapshot, CancellationToken cancellationToken = default)
     {
+        var bookList = books?.ToList() ?? new List<CalibreMirrorBook>();
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
+
+        var existingIds = await LoadExistingIdsAsync(conn, cancellationToken);
+        var newIdSet = new HashSet<int>(bookList.Select(b => b.Id));
+        var added = newIdSet.Except(existingIds).ToList();
+        var removed = existingIds.Except(newIdSet).ToList();
+
         await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken);
 
         var deleteCmd = conn.CreateCommand();
@@ -131,7 +144,7 @@ public class CalibreMirrorRepository
         var pCoverUrl = insertCmd.Parameters.Add("@coverUrl", SqliteType.Text);
         var pUpdated = insertCmd.Parameters.Add("@updated", SqliteType.Text);
 
-        foreach (var book in books)
+        foreach (var book in bookList)
         {
             pId.Value = book.Id;
             pTitle.Value = book.Title;
@@ -167,6 +180,8 @@ public class CalibreMirrorRepository
         await stateCmd.ExecuteNonQueryAsync(cancellationToken);
 
         await tx.CommitAsync(cancellationToken);
+
+        return new CalibreMirrorReplaceResult(added, removed, bookList.Count, snapshot);
     }
 
     public async Task<IReadOnlyList<CalibreMirrorBook>> GetBooksAsync(int take = 200, CancellationToken cancellationToken = default)
@@ -293,5 +308,22 @@ public class CalibreMirrorRepository
         using var alter = conn.CreateCommand();
         alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
         alter.ExecuteNonQuery();
+    }
+
+    private static async Task<HashSet<int>> LoadExistingIdsAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        var ids = new HashSet<int>();
+        var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id FROM calibre_books;";
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!reader.IsDBNull(0))
+            {
+                ids.Add(reader.GetInt32(0));
+            }
+        }
+
+        return ids;
     }
 }

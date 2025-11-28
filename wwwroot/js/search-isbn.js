@@ -8,9 +8,9 @@
     const states = {};
 
     function classifyResults(state) {
-        const { resultsEl, results, query } = state;
+        const { resultsEl, results, related, query } = state;
         resultsEl.innerHTML = '';
-        if (!results.length) return;
+        if (!results.length && (!related || !related.length)) return;
 
         const normalized = (query || '').trim().toLowerCase();
         const matches = [];
@@ -61,6 +61,9 @@
         if (suggestions.length) {
             renderSection(matches.length || weakMatches.length ? 'Suggested' : 'Related titles', suggestions);
         }
+        if (related && related.length) {
+            renderSection('Related (title/author)', related);
+        }
     }
 
     function attachPanel(panel) {
@@ -79,6 +82,7 @@
             resultsEl,
             query: '',
             results: [],
+            related: [],
             status: 'Ready.'
         };
 
@@ -91,9 +95,33 @@
             applyStatus();
         };
 
+        const fetchRelated = async (title) => {
+            if (!title) return;
+            try {
+                const res = await fetch(`/search?query=${encodeURIComponent(title)}&mode=title&skipHistory=true`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const books = Array.isArray(data?.books) ? data.books : [];
+                if (!books.length) return;
+                const primaryKey = books[0]?.slug || books[0]?.id || books[0]?.title;
+                const related = books
+                    .filter(b => {
+                        const key = b.slug || b.id || b.title;
+                        return key && key !== primaryKey;
+                    })
+                    .slice(0, 10);
+                if (!related.length) return;
+                state.related = related;
+                classifyResults(state);
+            } catch (err) {
+                console.warn('Related fetch failed', err);
+            }
+        };
+
         const runSearch = async (query) => {
             state.query = query;
             state.results = [];
+            state.related = [];
             setStatus('Searching…');
             resultsEl.innerHTML = '';
 
@@ -115,6 +143,10 @@
                 state.results = books;
                 setStatus(`Found ${books.length} result(s).`);
                 classifyResults(state);
+                const primaryTitle = books[0]?.title;
+                if (primaryTitle) {
+                    fetchRelated(primaryTitle);
+                }
             } catch (err) {
                 console.error(err);
                 setStatus('Error talking to Bookworm API.');

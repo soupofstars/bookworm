@@ -1,8 +1,16 @@
+using System;
+using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 
 namespace Bookworm.Data;
 
-public record CalibreSyncResult(bool Success, int Count, DateTime? Snapshot, string? Error);
+public record CalibreSyncResult(
+    bool Success,
+    int Count,
+    DateTime? Snapshot,
+    string? Error,
+    IReadOnlyList<int> NewBookIds,
+    IReadOnlyList<int> RemovedBookIds);
 
 public class CalibreSyncService
 {
@@ -31,12 +39,12 @@ public class CalibreSyncService
     {
         if (!_source.IsConfigured)
         {
-            return new CalibreSyncResult(false, 0, null, "Calibre path not configured.");
+            return new CalibreSyncResult(false, 0, null, "Calibre path not configured.", Array.Empty<int>(), Array.Empty<int>());
         }
 
         if (!TryGetLibraryRoot(out var libraryRoot, out var metadataPath, out var error))
         {
-            return new CalibreSyncResult(false, 0, null, error ?? "Calibre metadata not found.");
+            return new CalibreSyncResult(false, 0, null, error ?? "Calibre metadata not found.", Array.Empty<int>(), Array.Empty<int>());
         }
 
         await _gate.WaitAsync(cancellationToken);
@@ -45,8 +53,9 @@ public class CalibreSyncService
             var books = await _source.GetRecentBooksAsync(int.MaxValue, cancellationToken);
             if (!books.Any())
             {
-                await _mirror.ReplaceAllAsync(Array.Empty<CalibreMirrorBook>(), metadataPath, DateTime.UtcNow, cancellationToken);
-                return new CalibreSyncResult(true, 0, DateTime.UtcNow, null);
+                var emptySnapshot = DateTime.UtcNow;
+                var emptyReplaceResult = await _mirror.ReplaceAllAsync(Array.Empty<CalibreMirrorBook>(), metadataPath, emptySnapshot, cancellationToken);
+                return new CalibreSyncResult(true, 0, emptySnapshot, null, emptyReplaceResult.NewIds, emptyReplaceResult.RemovedIds);
             }
 
             var mirrored = new List<CalibreMirrorBook>(books.Count);
@@ -85,13 +94,13 @@ public class CalibreSyncService
             }
 
             var snapshot = DateTime.UtcNow;
-            await _mirror.ReplaceAllAsync(mirrored, metadataPath, snapshot, cancellationToken);
-            return new CalibreSyncResult(true, mirrored.Count, snapshot, null);
+            var replaceResult = await _mirror.ReplaceAllAsync(mirrored, metadataPath, snapshot, cancellationToken);
+            return new CalibreSyncResult(true, mirrored.Count, snapshot, null, replaceResult.NewIds, replaceResult.RemovedIds);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Calibre sync failed.");
-            return new CalibreSyncResult(false, 0, null, ex.Message);
+            return new CalibreSyncResult(false, 0, null, ex.Message, Array.Empty<int>(), Array.Empty<int>());
         }
         finally
         {

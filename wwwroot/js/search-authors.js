@@ -11,59 +11,309 @@
     const resultsEl = panel.querySelector('.search-results');
     if (!form || !input || !statusEl || !resultsEl) return;
 
+    const paginationEl = document.createElement('div');
+    paginationEl.className = 'search-pagination hidden';
+    paginationEl.innerHTML = `
+        <button type="button" class="btn btn-ghost search-page-prev">Prev</button>
+        <div class="search-pagination-info"></div>
+        <button type="button" class="btn btn-ghost search-page-next">Next</button>
+    `;
+    resultsEl.parentNode.insertBefore(paginationEl, resultsEl);
+    const pagination = {
+        el: paginationEl,
+        info: paginationEl.querySelector('.search-pagination-info'),
+        prev: paginationEl.querySelector('.search-page-prev'),
+        next: paginationEl.querySelector('.search-page-next')
+    };
+
+    const bookStatusEl = document.createElement('div');
+    bookStatusEl.className = 'status search-status hidden';
+    const bookResultsEl = document.createElement('div');
+    bookResultsEl.className = 'search-results results-grid author-books-grid';
+    resultsEl.insertAdjacentElement('afterend', bookStatusEl);
+    bookStatusEl.insertAdjacentElement('afterend', bookResultsEl);
+
+    const wikiImageCache = new Map();
+
     const state = {
         query: '',
         status: 'Ready.',
-        results: []
+        results: [],
+        total: 0,
+        page: 1,
+        pageSize: 20
     };
 
-    const applyStatus = () => statusEl.textContent = state.status;
+    const applyStatus = () => {
+        const pageInfo = state.total && state.total > state.results.length
+            ? ` · page ${state.page}`
+            : '';
+        statusEl.textContent = `${state.status}${pageInfo}`;
+    };
     const setStatus = text => {
         state.status = text;
         applyStatus();
     };
 
-    const classifyResults = () => {
-        resultsEl.innerHTML = '';
-        if (!state.results.length) return;
-
-        const grid = document.createElement('div');
-        grid.className = 'results-grid';
-        state.results.forEach(book => grid.appendChild(app.createBookCard(book)));
-        resultsEl.appendChild(grid);
+    const updatePagination = () => {
+        if (!pagination?.el) return;
+        const total = state.total || 0;
+        const pageSize = state.pageSize || 20;
+        const page = state.page || 1;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (!total || totalPages <= 1) {
+            pagination.el.classList.add('hidden');
+            return;
+        }
+        pagination.el.classList.remove('hidden');
+        if (pagination.info) {
+            const showing = state.results ? state.results.length : 0;
+            pagination.info.textContent = `Page ${page} of ${totalPages} · Showing ${showing} of ${total} results`;
+        }
+        if (pagination.prev) pagination.prev.disabled = page <= 1;
+        if (pagination.next) pagination.next.disabled = page >= totalPages;
     };
 
-    const runSearch = async (query) => {
-        state.query = query;
+    const fetchWikiThumb = async (name) => {
+        if (!name) return null;
+        if (wikiImageCache.has(name)) return wikiImageCache.get(name);
+        try {
+            const url = `https://en.wikipedia.org/w/api.php?action=query&origin=*&format=json&prop=pageimages&piprop=thumbnail&pithumbsize=240&titles=${encodeURIComponent(name)}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const pages = data?.query?.pages;
+            if (pages) {
+                const first = Object.values(pages)[0];
+                const thumb = first?.thumbnail?.source;
+                if (thumb) {
+                    wikiImageCache.set(name, thumb);
+                    return thumb;
+                }
+            }
+        } catch (err) {
+            console.warn('Wiki image lookup failed', err);
+        }
+        wikiImageCache.set(name, null);
+        return null;
+    };
+
+    const setAuthorAvatar = (author, avatarEl) => {
+        const initial = author.name ? (author.name[0] || '?') : '👤';
+        const applyInitial = () => {
+            avatarEl.innerHTML = '';
+            avatarEl.textContent = initial;
+            avatarEl.classList.add('author-avatar--placeholder');
+        };
+
+        const attemptImg = (url) => {
+            return new Promise(resolve => {
+                if (!url) return resolve(false);
+                const img = new Image();
+                img.alt = `${author.name || 'Author'} portrait`;
+                img.loading = 'lazy';
+                img.onerror = () => resolve(false);
+                img.onload = () => {
+                    const tooSmall = !img.naturalWidth || !img.naturalHeight || img.naturalWidth <= 1 || img.naturalHeight <= 1;
+                    if (tooSmall) {
+                        resolve(false);
+                        return;
+                    }
+                    avatarEl.classList.remove('author-avatar--placeholder');
+                    avatarEl.innerHTML = '';
+                    avatarEl.appendChild(img);
+                    resolve(true);
+                };
+                img.src = url;
+            });
+        };
+
+        applyInitial();
+        const olKey = author.key || author.slug || null;
+        const olCover = olKey ? `https://covers.openlibrary.org/a/olid/${olKey}-L.jpg` : null;
+
+        attemptImg(olCover).then(ok => {
+            if (ok) return;
+            const alt = author.image?.url || null;
+            attemptImg(alt).then(ok2 => {
+                if (ok2) return;
+                fetchWikiThumb(author.name).then(url => {
+                    if (url) {
+                        attemptImg(url);
+                    }
+                });
+            });
+        });
+    };
+
+    const renderResults = () => {
+        resultsEl.innerHTML = '';
+        if (!state.results.length) {
+            updatePagination();
+            return;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'author-results';
+
+        state.results.forEach(author => {
+            const row = document.createElement('div');
+            row.className = 'author-row';
+            row.addEventListener('click', () => showAuthorBooks(author.name));
+
+            const avatar = document.createElement('div');
+            avatar.className = 'author-avatar';
+            setAuthorAvatar(author, avatar);
+
+            const body = document.createElement('div');
+            body.className = 'author-body';
+
+            const header = document.createElement('div');
+            header.className = 'author-header';
+
+            const name = document.createElement('div');
+            name.className = 'author-name';
+            name.textContent = author.name || 'Unknown author';
+
+            const meta = document.createElement('div');
+            meta.className = 'author-meta';
+            const life = [author.birth_date, author.death_date].filter(Boolean).join(' – ');
+            if (life) {
+                const lifeSpan = document.createElement('span');
+                lifeSpan.textContent = life;
+                meta.appendChild(lifeSpan);
+            }
+            if (typeof author.work_count === 'number') {
+                const works = document.createElement('span');
+                works.textContent = `${author.work_count} work(s)`;
+                meta.appendChild(works);
+            }
+
+            header.appendChild(name);
+            header.appendChild(meta);
+
+            const topWork = document.createElement('div');
+            topWork.className = 'author-topwork';
+            topWork.textContent = author.top_work ? `Top work: ${author.top_work}` : 'Top work: Unknown';
+
+            const subjects = document.createElement('div');
+            subjects.className = 'author-subjects';
+            const tags = Array.isArray(author.top_subjects) ? author.top_subjects : [];
+            if (tags.length) {
+                subjects.innerHTML = tags.map(tag => `<span class="author-tag">${tag}</span>`).join('');
+            }
+
+            body.appendChild(header);
+            body.appendChild(topWork);
+            if (subjects.innerHTML) {
+                body.appendChild(subjects);
+            }
+
+            row.appendChild(avatar);
+            row.appendChild(body);
+            list.appendChild(row);
+        });
+
+        resultsEl.appendChild(list);
+        updatePagination();
+    };
+
+    const showAuthorBooks = async (authorName) => {
+        if (!authorName) return;
+        // Clear author list when drilling into books
+        state.total = 0;
         state.results = [];
+        resultsEl.innerHTML = '';
+        resultsEl.classList.add('hidden');
+        if (pagination?.el) pagination.el.classList.add('hidden');
+        statusEl.textContent = '';
+        bookResultsEl.innerHTML = '';
+        bookStatusEl.classList.remove('hidden');
+        bookStatusEl.textContent = `Loading books by ${authorName}…`;
+        try {
+            const res = await fetch(`/search?query=${encodeURIComponent(authorName)}&mode=author&page=1`);
+            if (!res.ok) {
+                const detail = await res.text().catch(() => '');
+                bookStatusEl.textContent = detail
+                    ? `Error loading books (${res.status}): ${detail}`
+                    : `Error loading books (${res.status}).`;
+                return;
+            }
+            const data = await res.json();
+            const books = Array.isArray(data?.books) ? data.books : [];
+            if (!books.length) {
+                bookStatusEl.textContent = `No books found for ${authorName}.`;
+                return;
+            }
+            bookStatusEl.textContent = `Books by ${authorName} · ${data?.total ?? books.length} result(s).`;
+            books.forEach(book => {
+                bookResultsEl.appendChild(app.createBookCard(book, {
+                    showWanted: true,
+                    sourceInRightPill: true,
+                    showIsbnInline: true
+                }));
+            });
+        } catch (err) {
+            console.error('Author books load failed', err);
+            bookStatusEl.textContent = 'Error loading books.';
+        }
+    };
+
+    const runSearch = async (query, page = 1) => {
+        state.query = query;
+        state.page = page;
+        state.results = [];
+        state.total = 0;
+        bookResultsEl.innerHTML = '';
+        bookStatusEl.classList.add('hidden');
+        resultsEl.classList.remove('hidden');
         setStatus('Searching…');
         resultsEl.innerHTML = '';
+        updatePagination();
 
         try {
-            const res = await fetch(`/search?query=${encodeURIComponent(query)}&mode=author`);
+            const res = await fetch(`/search/authors?query=${encodeURIComponent(query)}&page=${page}`);
             if (!res.ok) {
                 setStatus('Error: ' + res.status);
                 return;
             }
 
             const data = await res.json();
-            const books = Array.isArray(data?.books) ? data.books : [];
-            if (!books.length) {
+            const authors = Array.isArray(data?.authors) ? data.authors : [];
+            if (!authors.length) {
                 state.results = [];
+                state.total = typeof data?.total === 'number' ? data.total : 0;
                 setStatus('No results found.');
+                updatePagination();
                 return;
             }
 
-            state.results = books;
-            setStatus(`Found ${books.length} result(s).`);
-            classifyResults();
+            state.results = authors;
+            state.total = typeof data?.total === 'number' ? data.total : authors.length;
+            state.pageSize = typeof data?.pageSize === 'number' ? data.pageSize : state.pageSize;
+            state.page = typeof data?.page === 'number' ? data.page : page;
+            setStatus(`Found ${state.total} author(s).`);
+            renderResults();
         } catch (err) {
             console.error(err);
             setStatus('Error talking to Bookworm API.');
+            updatePagination();
         }
     };
 
     state.runSearch = runSearch;
+
+    if (pagination) {
+        pagination.prev.addEventListener('click', () => {
+            const prevPage = Math.max(1, (state.page || 1) - 1);
+            runSearch(state.query || input.value.trim(), prevPage);
+        });
+        pagination.next.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil((state.total || 0) / (state.pageSize || 20)));
+            const nextPage = Math.min(totalPages, (state.page || 1) + 1);
+            runSearch(state.query || input.value.trim(), nextPage);
+        });
+    }
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -78,7 +328,8 @@
         restore() {
             input.value = state.query;
             applyStatus();
-            classifyResults();
+            renderResults();
+            updatePagination();
         },
         search(query) {
             if (!query) return;

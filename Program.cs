@@ -21,6 +21,7 @@ builder.Services.AddSingleton<HardcoverListService>();
 builder.Services.AddSingleton(new HardcoverListCacheRepository(wantedDb));
 builder.Services.AddSingleton(new SuggestedRepository(wantedDb));
 builder.Services.AddSingleton<SuggestedRankingService>();
+builder.Services.AddSingleton(new SearchHistoryRepository(wantedDb));
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -403,7 +404,7 @@ app.MapDelete("/wanted/{key}", async (WantedRepository repo, string key) =>
 });
 
 // Fuzzy book search via OpenLibrary
-app.MapGet("/search", async (string query, string? mode, IHttpClientFactory factory) =>
+app.MapGet("/search", async (string query, string? mode, int? page, bool? skipHistory, IHttpClientFactory factory, SearchHistoryRepository historyRepo) =>
 {
     if (string.IsNullOrWhiteSpace(query))
         return Results.BadRequest(new { error = "query is required" });
@@ -417,11 +418,14 @@ app.MapGet("/search", async (string query, string? mode, IHttpClientFactory fact
         "isbn" => new[] { "isbn", "title", "q" },
         _ => new[] { "title", "q" }
     };
+    var pageNumber = Math.Max(1, page.GetValueOrDefault(1));
+    const int pageSize = 20;
     List<OpenLibraryDoc> docs = new();
+    int? numFound = null;
 
     foreach (var param in searchParams)
     {
-        var response = await client.GetAsync($"/search.json?{param}={Uri.EscapeDataString(query)}&limit=20&fields={fields}");
+        var response = await client.GetAsync($"/search.json?{param}={Uri.EscapeDataString(query)}&limit={pageSize}&page={pageNumber}&fields={fields}");
 
         if (!response.IsSuccessStatusCode)
         {
@@ -431,6 +435,7 @@ app.MapGet("/search", async (string query, string? mode, IHttpClientFactory fact
 
         var payload = await response.Content.ReadFromJsonAsync<OpenLibrarySearchResponse>()
                       ?? new OpenLibrarySearchResponse(Array.Empty<OpenLibraryDoc>());
+        numFound = payload.NumFound;
 
         docs = payload.Docs
             .Where(doc => !string.IsNullOrWhiteSpace(doc.Title))
@@ -473,9 +478,93 @@ app.MapGet("/search", async (string query, string? mode, IHttpClientFactory fact
         })
         .ToList();
 
-    return Results.Ok(new { query, count = books.Count, books });
+    var totalCount = numFound ?? books.Count;
+    if (normalizedMode == "title" && skipHistory != true)
+    {
+        await historyRepo.LogAsync(query, totalCount);
+    }
+    return Results.Ok(new { query, count = books.Count, total = totalCount, page = pageNumber, pageSize, books });
 })
 .WithName("OpenLibrarySearch");
+
+// Author search via OpenLibrary
+app.MapGet("/search/authors", async (string query, int? page, int? pageSize, IHttpClientFactory factory) =>
+{
+    if (string.IsNullOrWhiteSpace(query))
+        return Results.BadRequest(new { error = "query is required" });
+
+    var pageNumber = page.GetValueOrDefault(1);
+    if (pageNumber < 1) pageNumber = 1;
+    var limit = pageSize.GetValueOrDefault(20);
+    limit = Math.Clamp(limit, 1, 50);
+    var offset = (pageNumber - 1) * limit;
+
+    var client = factory.CreateClient("openlibrary");
+    var response = await client.GetAsync($"/search/authors.json?q={Uri.EscapeDataString(query)}&limit={limit}&offset={offset}");
+    if (!response.IsSuccessStatusCode)
+    {
+        var errorText = await response.Content.ReadAsStringAsync();
+        return Results.Problem($"OpenLibrary author search error: {response.StatusCode} - {errorText}");
+    }
+
+    var payload = await response.Content.ReadFromJsonAsync<OpenLibraryAuthorSearchResponse>()
+                  ?? new OpenLibraryAuthorSearchResponse(Array.Empty<OpenLibraryAuthorDoc>());
+
+    var authors = payload.Docs
+        .Where(a => !string.IsNullOrWhiteSpace(a.Name))
+        .Select(a => new
+        {
+            key = a.Key,
+            name = a.Name,
+            top_work = a.TopWork,
+            work_count = a.WorkCount,
+            birth_date = a.BirthDate,
+            death_date = a.DeathDate,
+            top_subjects = a.TopSubjects?.Take(5) ?? Enumerable.Empty<string>(),
+            source = "openlibrary-author"
+        })
+        .ToList();
+
+    return Results.Ok(new
+    {
+        query,
+        count = authors.Count,
+        total = payload.NumFound ?? authors.Count,
+        page = pageNumber,
+        pageSize = limit,
+        authors
+    });
+})
+.WithName("OpenLibraryAuthorSearch");
+
+// Search history (book searches)
+app.MapGet("/search/history", async (int? take, SearchHistoryRepository repo) =>
+{
+    var limit = take.GetValueOrDefault(8);
+    var items = await repo.GetRecentAsync(limit);
+    return Results.Ok(new
+    {
+        items = items.Select(i => new
+        {
+            query = i.Query,
+            count = i.ResultCount,
+            lastSearched = i.LastSearched
+        })
+    });
+})
+.WithName("SearchHistory");
+
+app.MapDelete("/search/history", async (string query, SearchHistoryRepository repo) =>
+{
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return Results.BadRequest(new { error = "query is required" });
+    }
+
+    await repo.DeleteAsync(query);
+    return Results.NoContent();
+})
+.WithName("DeleteSearchHistory");
 
 // Exact-title Hardcover search (kept for compatibility or future needs)
 app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory, IConfiguration config) =>
@@ -1054,7 +1143,17 @@ app.MapPost("/calibre/sync", async (CalibreSyncService syncService, Cancellation
         return Results.BadRequest(new { error = result.Error });
     }
 
-    return Results.Ok(new { synced = result.Count, snapshot = result.Snapshot });
+    var newIds = result.NewBookIds ?? Array.Empty<int>();
+    var removedIds = result.RemovedBookIds ?? Array.Empty<int>();
+    return Results.Ok(new
+    {
+        synced = result.Count,
+        snapshot = result.Snapshot,
+        newBookIds = newIds,
+        removedBookIds = removedIds,
+        newCount = newIds.Count,
+        removedCount = removedIds.Count
+    });
 })
 .WithName("SyncCalibreLibrary");
 
@@ -1276,6 +1375,134 @@ app.MapPost("/hardcover/book/resolve", async (HardcoverResolveRequest request, I
     return Results.Ok(new { id, slug });
 });
 
+app.MapPost("/hardcover/book/image", async (HardcoverResolveRequest request, IHttpClientFactory factory, IConfiguration config) =>
+{
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.BadRequest(new { error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey." });
+    }
+
+    static string? NormalizeIsbn(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var cleaned = new string(raw.Where(char.IsLetterOrDigit).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
+    }
+
+    var isbnRaw = NormalizeIsbn(request?.Isbn);
+    var bookId = request?.BookId;
+    if (string.IsNullOrWhiteSpace(isbnRaw) && bookId is null)
+    {
+        return Results.BadRequest(new { error = "isbn or bookId is required" });
+    }
+
+    var client = factory.CreateClient("hardcover");
+    const string isbnQuery = @"
+        query BookImageByIsbn($isbn: String!, $isbn10: String!) {
+          books(
+            where: {
+              _or: [
+                { isbn13: { _eq: $isbn } }
+                { isbn_13: { _eq: $isbn } }
+                { isbn10: { _eq: $isbn10 } }
+                { isbn_10: { _eq: $isbn10 } }
+              ]
+            }
+            limit: 1
+          ) {
+            id
+            image { url }
+            cached_contributors { name image { url } }
+          }
+        }";
+
+    const string idQuery = @"
+        query BookImageById($id: Int!) {
+          books_by_pk(id: $id) {
+            id
+            image { url }
+            cached_contributors { name image { url } }
+          }
+        }";
+
+    object BuildPayload()
+    {
+        if (bookId is not null)
+        {
+            return new { query = idQuery, variables = new { id = bookId.Value } };
+        }
+
+        string AsIsbn10(string cleaned)
+        {
+            if (cleaned.Length == 10) return cleaned;
+            if (cleaned.Length == 13) return cleaned[^10..];
+            return cleaned;
+        }
+
+        return new { query = isbnQuery, variables = new { isbn = isbnRaw, isbn10 = AsIsbn10(isbnRaw!) } };
+    }
+
+    var payload = BuildPayload();
+    var response = await client.PostAsJsonAsync("", payload);
+    if (!response.IsSuccessStatusCode)
+    {
+        return await ForwardHardcoverError(response, "book-image");
+    }
+
+    using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+    if (doc is null || !doc.RootElement.TryGetProperty("data", out var data))
+    {
+        return Results.NotFound(new { error = "Book not found." });
+    }
+
+    JsonElement? bookNode = null;
+    if (data.TryGetProperty("books_by_pk", out var byPk) && byPk.ValueKind == JsonValueKind.Object)
+    {
+        bookNode = byPk;
+    }
+    else if (data.TryGetProperty("books", out var booksEl) && booksEl.ValueKind == JsonValueKind.Array && booksEl.GetArrayLength() > 0)
+    {
+        bookNode = booksEl[0];
+    }
+
+    if (bookNode is null)
+    {
+        return Results.NotFound(new { error = "Book not found." });
+    }
+
+    static string? ReadImage(JsonElement el, string property)
+    {
+        if (!el.TryGetProperty(property, out var child)) return null;
+        if (child.ValueKind == JsonValueKind.Object && child.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
+        {
+            return urlEl.GetString();
+        }
+        return null;
+    }
+
+    var imageUrl = ReadImage(bookNode.Value, "image");
+    string? contributorImage = null;
+    if (bookNode.Value.TryGetProperty("cached_contributors", out var contribs) && contribs.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var contrib in contribs.EnumerateArray())
+        {
+            contributorImage = ReadImage(contrib, "image");
+            if (!string.IsNullOrWhiteSpace(contributorImage))
+            {
+                break;
+            }
+        }
+    }
+
+    if (string.IsNullOrWhiteSpace(imageUrl) && string.IsNullOrWhiteSpace(contributorImage))
+    {
+        return Results.NotFound(new { error = "No images available." });
+    }
+
+    return Results.Ok(new { image = imageUrl, contributorImage });
+})
+.WithName("HardcoverBookImage");
+
 app.MapPost("/hardcover/want-to-read/check", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config) =>
 {
     if (string.IsNullOrWhiteSpace(request.BookId))
@@ -1372,88 +1599,127 @@ app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest reques
         return Results.BadRequest(new { error = "bookId must be an integer Hardcover book id." });
     }
 
-    var client = factory.CreateClient("hardcover");
-    var mutationVariables = new { bookId = (object)intId };
-    var debug = string.Equals(httpContext.Request.Query["debug"], "1", StringComparison.OrdinalIgnoreCase);
-
-    var shouldWant = request.WantToRead ?? (request.StatusId == 1);
-    if (shouldWant)
+    int ResolveStatusId()
     {
-        var mutation = @"
-            mutation addBook($bookId: Int!) {
-              insert_user_book(object: { book_id: $bookId, status_id: 1 }) {
-                id
-              }
-            }";
-
-        var response = await client.PostAsJsonAsync("", new
+        if (request.StatusId.HasValue) return request.StatusId.Value;
+        if (request.WantToRead.HasValue)
         {
-            query = mutation,
-            variables = mutationVariables
-        });
-
-        var body = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-        {
-            return Results.Problem(
-                title: "Hardcover addBook failed",
-                detail: string.IsNullOrWhiteSpace(body) ? null : body,
-                statusCode: (int)response.StatusCode,
-                extensions: debug
-                    ? new Dictionary<string, object?>
-                    {
-                        ["mutation"] = mutation,
-                        ["variables"] = mutationVariables,
-                        ["raw"] = body
-                    }
-                    : null);
+            return request.WantToRead.Value ? 1 : 6;
         }
 
-        JsonDocument? doc = null;
-        try
-        {
-            doc = JsonDocument.Parse(body);
-        }
-        catch
-        {
-            // ignore parse errors; fall back to raw body
-        }
-
-        if (HasGraphQlErrors(doc))
-        {
-            var errors = ExtractGraphQlErrors(doc);
-            if (IsUniqueConflict(errors))
-            {
-                return Results.Ok(new { status = "ok", method = "insert", note = "already_exists" });
-            }
-
-            return Results.Problem(
-                title: "Hardcover addBook failed",
-                detail: string.IsNullOrWhiteSpace(errors) ? body : errors,
-                statusCode: StatusCodes.Status400BadRequest,
-                extensions: debug
-                    ? new Dictionary<string, object?>
-                    {
-                        ["mutation"] = mutation,
-                        ["variables"] = mutationVariables,
-                        ["raw"] = body,
-                        ["errors"] = errors
-                    }
-                    : null);
-        }
-
-        return Results.Ok(new { status = "ok", method = "insert" });
+        return 1;
     }
 
-    // Per latest requirement, only sync additions to Hardcover.
-    return Results.Ok(new { status = "skipped", reason = "remove_not_synced" });
+    var desiredStatusId = ResolveStatusId();
+    if (desiredStatusId is not (1 or 6))
+    {
+        return Results.BadRequest(new { error = "statusId must be 1 (want) or 6 (remove)." });
+    }
+
+    var client = factory.CreateClient("hardcover");
+    var debug = string.Equals(httpContext.Request.Query["debug"], "1", StringComparison.OrdinalIgnoreCase);
+
+    const string mutation = @"
+        mutation addBook($bookId: Int!, $statusId: Int!) {
+          insert_user_book(object: { book_id: $bookId, status_id: $statusId }) {
+            id
+          }
+        }";
+
+    var mutationVariables = new { bookId = (object)intId, statusId = desiredStatusId };
+    var response = await client.PostAsJsonAsync("", new
+    {
+        query = mutation,
+        variables = mutationVariables
+    });
+
+    var body = await response.Content.ReadAsStringAsync();
+    if (!response.IsSuccessStatusCode)
+    {
+        return Results.Problem(
+            title: "Hardcover addBook failed",
+            detail: string.IsNullOrWhiteSpace(body) ? null : body,
+            statusCode: (int)response.StatusCode,
+            extensions: debug
+                ? new Dictionary<string, object?>
+                {
+                    ["mutation"] = mutation,
+                    ["variables"] = mutationVariables,
+                    ["raw"] = body
+                }
+                : null);
+    }
+
+    JsonDocument? doc = null;
+    try
+    {
+        doc = JsonDocument.Parse(body);
+    }
+    catch
+    {
+        // ignore parse errors; fall back to raw body
+    }
+
+    if (HasGraphQlErrors(doc))
+    {
+        var errors = ExtractGraphQlErrors(doc);
+        if (IsUniqueConflict(errors))
+        {
+            return Results.Ok(new { status = "ok", method = "insert", note = "already_exists", statusId = desiredStatusId });
+        }
+
+        return Results.Problem(
+            title: "Hardcover addBook failed",
+            detail: string.IsNullOrWhiteSpace(errors) ? body : errors,
+            statusCode: StatusCodes.Status400BadRequest,
+            extensions: debug
+                ? new Dictionary<string, object?>
+                {
+                    ["mutation"] = mutation,
+                    ["variables"] = mutationVariables,
+                    ["raw"] = body,
+                    ["errors"] = errors
+                }
+                : null);
+    }
+
+    return Results.Ok(new { status = "ok", method = "insert", statusId = desiredStatusId });
 })
 .WithName("SetHardcoverWantStatus");
 
 app.Run();
 
 record OpenLibrarySearchResponse(
-    [property: JsonPropertyName("docs")] IEnumerable<OpenLibraryDoc> Docs);
+    [property: JsonPropertyName("docs")] IEnumerable<OpenLibraryDoc> Docs,
+    [property: JsonPropertyName("numFound")] int? NumFound = null);
+
+record OpenLibraryAuthorSearchResponse(
+    [property: JsonPropertyName("docs")] IEnumerable<OpenLibraryAuthorDoc> Docs,
+    [property: JsonPropertyName("numFound")] int? NumFound = null);
+
+record OpenLibraryAuthorDoc
+{
+    [JsonPropertyName("key")]
+    public string? Key { get; init; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [JsonPropertyName("top_work")]
+    public string? TopWork { get; init; }
+
+    [JsonPropertyName("work_count")]
+    public int? WorkCount { get; init; }
+
+    [JsonPropertyName("birth_date")]
+    public string? BirthDate { get; init; }
+
+    [JsonPropertyName("death_date")]
+    public string? DeathDate { get; init; }
+
+    [JsonPropertyName("top_subjects")]
+    public IEnumerable<string>? TopSubjects { get; init; }
+}
 
 record OpenLibraryDoc
 {
