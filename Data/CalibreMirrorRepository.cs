@@ -40,6 +40,15 @@ public class CalibreMirrorRepository
         EnsureSchema();
     }
 
+    public string DatabasePath
+    {
+        get
+        {
+            var builder = new SqliteConnectionStringBuilder(_connectionString);
+            return builder.DataSource;
+        }
+    }
+
     private static string NormalizeConnectionString(string raw)
     {
         var builder = new SqliteConnectionStringBuilder(raw);
@@ -196,14 +205,14 @@ public class CalibreMirrorRepository
                        has_cover, formats_json, tags_json, publisher, series, file_size_mb,
                        description, cover_url
                 FROM calibre_books
-                ORDER BY COALESCE(added_at, updated_at) DESC;
+                ORDER BY id DESC;
                 """
             : """
                 SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
                        has_cover, formats_json, tags_json, publisher, series, file_size_mb,
                        description, cover_url
                 FROM calibre_books
-                ORDER BY COALESCE(added_at, updated_at) DESC
+                ORDER BY id DESC
                 LIMIT @take;
                 """;
         if (!unlimited)

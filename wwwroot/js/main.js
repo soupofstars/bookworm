@@ -10,6 +10,7 @@
         wantedLoading: false,
         wantedLoaded: false,
         wantedSearchQuery: '',
+        wantedSort: 'title-asc',
         hardcoverSyncEnabled: false
     };
     const HARDCOVER_SYNC_KEY = 'bookworm:hardcover-sync';
@@ -48,6 +49,7 @@
         wantedResults: document.getElementById('wanted-results'),
         wantedSearchInput: document.getElementById('wanted-search-input'),
         wantedSearchClear: document.getElementById('wanted-search-clear'),
+        wantedSortSelect: document.getElementById('wanted-sort'),
         hardcoverToggle: document.getElementById('toggle-hardcover-sync'),
         hardcoverToggleStatus: document.getElementById('settings-hardcover-status'),
         calibrePathInput: document.getElementById('input-calibre-path'),
@@ -1154,7 +1156,7 @@ div.innerHTML = `
 
         libraryLoadPromise = (async () => {
             try {
-                const res = await fetch('/calibre/books?take=0');
+                const res = await fetch(`/calibre/books?take=0&ts=${Date.now()}`, { cache: 'no-store' });
                 if (!res.ok) {
                     const detail = await res.text().catch(() => '');
                     throw new Error(detail || `Unable to load Calibre library (HTTP ${res.status}).`);
@@ -1304,11 +1306,11 @@ div.innerHTML = `
                 : state.library.filter(book => libraryMatchesQuery(book, normalized)).length;
             refs.libraryStatus.textContent = visible === 0
                 ? `No matches for "${rawQuery}".${syncSuffix ? ` ${syncSuffix}` : ''}`
-                : `Showing ${visible} of ${total} Calibre book(s).${syncSuffix}`;
+                : `Showing ${visible} of ${total} book(s).${syncSuffix}`;
             return;
         }
         const base = total
-            ? `Calibre library: showing ${total} book(s).${syncSuffix}`
+            ? `Showing ${total} book(s).${syncSuffix}`
             : 'No books on your bookshelf yet.';
         refs.libraryStatus.textContent = base;
     }
@@ -1471,9 +1473,10 @@ div.innerHTML = `
             return;
         }
 
-        applyWantedCountStatus(visible.length, rawQuery);
+        const sorted = sortLibraryList(visible, state.wantedSort);
+        applyWantedCountStatus(sorted.length, rawQuery);
 
-        visible.forEach(book => {
+        sorted.forEach(book => {
             wantedResults.appendChild(createBookCard(book, {
                 showWanted: false,
                 showAddToLibrary: false,
@@ -1611,6 +1614,13 @@ div.innerHTML = `
             refs.wantedSearchInput.value = '';
             setWantedSearchQuery('');
             refs.wantedSearchInput.focus();
+        });
+    }
+    if (refs.wantedSortSelect) {
+        refs.wantedSortSelect.value = state.wantedSort;
+        refs.wantedSortSelect.addEventListener('change', (event) => {
+            state.wantedSort = event.target.value || 'title-asc';
+            renderWanted();
         });
     }
 

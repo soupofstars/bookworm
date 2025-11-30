@@ -7,6 +7,7 @@
     const syncBtn = document.getElementById('btn-calibre-sync');
     const searchInput = document.getElementById('calibre-search-input');
     const searchClear = document.getElementById('calibre-search-clear');
+    const sortSelect = document.getElementById('calibre-sort');
     if (!statusEl || !resultsEl) return;
 
     let loaded = false;
@@ -15,7 +16,8 @@
     let searchQuery = '';
     let lastSyncText = '';
     let allBooks = [];
-    const searchCache = new WeakMap();
+    let searchCache = new WeakMap();
+    let sortKey = 'title-asc';
 
     function toArray(value) {
         if (Array.isArray(value)) return value;
@@ -117,6 +119,39 @@
         return buildSearchKey(book).includes(normalizedQuery);
     }
 
+    function primaryAuthor(book) {
+        const authors = Array.isArray(book.author_names) && book.author_names.length
+            ? book.author_names
+            : Array.isArray(book.authors) && book.authors.length
+                ? book.authors
+                : [];
+        return authors.length ? authors[0] : '';
+    }
+
+    function sortBooks(list) {
+        const arr = Array.isArray(list) ? list.slice() : [];
+        const byString = (getter, direction) => (a, b) => {
+            const av = getter(a).toLowerCase();
+            const bv = getter(b).toLowerCase();
+            if (av === bv) return 0;
+            return direction === 'asc' ? (av < bv ? -1 : 1) : (av > bv ? -1 : 1);
+        };
+
+        const getTitle = (book) => book?.title || '';
+
+        switch (sortKey) {
+            case 'title-desc':
+                return arr.sort(byString(getTitle, 'desc'));
+            case 'author-asc':
+                return arr.sort(byString(primaryAuthor, 'asc'));
+            case 'author-desc':
+                return arr.sort(byString(primaryAuthor, 'desc'));
+            case 'title-asc':
+            default:
+                return arr.sort(byString(getTitle, 'asc'));
+        }
+    }
+
     function renderBooks() {
         if (!allBooks.length) return;
         resultsEl.innerHTML = '';
@@ -125,8 +160,9 @@
         const visible = normalizedQuery
             ? allBooks.filter(book => matchesQuery(book, normalizedQuery))
             : allBooks;
+        const sorted = sortBooks(visible);
 
-        if (!visible.length) {
+        if (!sorted.length) {
             statusEl.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}". ${lastSyncText}`
                 : `No books found in Calibre mirror. ${lastSyncText}`;
@@ -134,7 +170,7 @@
         }
 
         let rendered = 0;
-        visible.forEach(book => {
+        sorted.forEach(book => {
             try {
                 resultsEl.appendChild(app.createBookCard(book, {
                     showWanted: false,
@@ -149,20 +185,25 @@
 
         const prefix = normalizedQuery
             ? `Showing ${rendered} of ${allBooks.length} Calibre book(s).`
-            : `Calibre library: showing ${rendered} of ${allBooks.length} book(s).`;
+            : `Showing ${rendered} of ${allBooks.length} book(s).`;
         statusEl.textContent = lastSyncText
             ? `${prefix} ${lastSyncText}`
             : prefix;
     }
 
-    async function loadCalibreBooks() {
-        if (loading) return;
+    async function loadCalibreBooks(force = false) {
+        if (loading && !force) return;
         loading = true;
+        if (force) {
+            loaded = false;
+            allBooks = [];
+            searchCache = new WeakMap();
+        }
         statusEl.textContent = 'Loading Calibre library…';
         resultsEl.innerHTML = '';
 
         try {
-            const res = await fetch('/calibre/books?take=0');
+            const res = await fetch(`/calibre/books?take=0&ts=${Date.now()}`, { cache: 'no-store' });
             if (!res.ok) {
                 const detail = await res.text().catch(() => '');
                 statusEl.textContent = detail || 'Unable to load Calibre library.';
@@ -219,7 +260,7 @@
                 statusEl.textContent = detail || 'Unable to sync Calibre library.';
                 return;
             }
-            await loadCalibreBooks();
+            await loadCalibreBooks(true);
         } catch (err) {
             console.error('Calibre sync failed', err);
             statusEl.textContent = 'Error syncing Calibre library.';
@@ -258,6 +299,13 @@
             searchQuery = '';
             renderBooks();
             searchInput.focus();
+        });
+    }
+    if (sortSelect) {
+        sortSelect.value = sortKey;
+        sortSelect.addEventListener('change', (event) => {
+            sortKey = event.target.value || 'title-asc';
+            renderBooks();
         });
     }
 

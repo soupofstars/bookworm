@@ -6,11 +6,13 @@
     const resultsEl = document.getElementById('hardcover-wanted-results');
     const searchInput = document.getElementById('hardcover-search-input');
     const searchClear = document.getElementById('hardcover-search-clear');
+    const sortSelect = document.getElementById('hardcover-sort');
     let loaded = false;
     let loading = false;
     let cachedBooks = [];
     let lastLoadPromise = null;
     let searchQuery = '';
+    let sortKey = 'title-asc';
     const searchCache = new WeakMap();
 
     function coerceArray(value) {
@@ -150,6 +152,48 @@
         return buildSearchKey(book).includes(normalizedQuery);
     }
 
+    function primaryAuthor(book) {
+        if (!book) return '';
+        const authors = Array.isArray(book.author_names) && book.author_names.length
+            ? book.author_names
+            : Array.isArray(book.authors) && book.authors.length
+                ? book.authors
+                : [];
+        if (authors.length) return authors[0];
+        if (Array.isArray(book.cached_contributors)) {
+            const contrib = book.cached_contributors.find(c => c && typeof c.name === 'string');
+            if (contrib) return contrib.name;
+        }
+        if (Array.isArray(book.contributions)) {
+            const contrib = book.contributions.find(c => c?.author?.name);
+            if (contrib && contrib.author.name) return contrib.author.name;
+        }
+        return '';
+    }
+
+    function sortBooks(list) {
+        const arr = Array.isArray(list) ? list.slice() : [];
+        const byString = (getter, direction) => (a, b) => {
+            const av = getter(a).toLowerCase();
+            const bv = getter(b).toLowerCase();
+            if (av === bv) return 0;
+            return direction === 'asc' ? (av < bv ? -1 : 1) : (av > bv ? -1 : 1);
+        };
+        const getTitle = (book) => book?.title || '';
+
+        switch (sortKey) {
+            case 'title-desc':
+                return arr.sort(byString(getTitle, 'desc'));
+            case 'author-asc':
+                return arr.sort(byString(primaryAuthor, 'asc'));
+            case 'author-desc':
+                return arr.sort(byString(primaryAuthor, 'desc'));
+            case 'title-asc':
+            default:
+                return arr.sort(byString(getTitle, 'asc'));
+        }
+    }
+
     function renderBooks() {
         resultsEl.innerHTML = '';
         const total = cachedBooks.length;
@@ -165,20 +209,21 @@
         const visible = normalizedQuery
             ? cachedBooks.filter(book => matchesQuery(book, normalizedQuery))
             : cachedBooks;
+        const sorted = sortBooks(visible);
 
-        if (!visible.length) {
+        if (!sorted.length) {
             statusEl.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}".`
                 : 'No “want to read” books on Hardcover yet.';
             return;
         }
 
-        visible.forEach(book => {
+        sorted.forEach(book => {
             resultsEl.appendChild(app.createBookCard(book));
         });
 
         statusEl.textContent = normalizedQuery
-            ? `Showing ${visible.length} of ${total} “want to read” book(s) on Hardcover.`
+            ? `Showing ${sorted.length} of ${total} “want to read” book(s) on Hardcover.`
             : `You have ${total} “want to read” book(s) on Hardcover.`;
     }
 
@@ -274,6 +319,13 @@
             searchQuery = '';
             renderBooks();
             searchInput.focus();
+        });
+    }
+    if (sortSelect) {
+        sortSelect.value = sortKey;
+        sortSelect.addEventListener('change', (event) => {
+            sortKey = event.target.value || 'title-asc';
+            renderBooks();
         });
     }
 })();

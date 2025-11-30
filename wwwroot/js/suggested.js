@@ -8,6 +8,7 @@
     const reloadBtn = document.getElementById('btn-suggested-reload');
     const searchInput = document.getElementById('suggested-search-input');
     const searchClearBtn = document.getElementById('suggested-search-clear');
+    const sortSelect = document.getElementById('suggested-sort');
     if (!statusEl || !resultsEl) return;
     if (resultsEl.classList.contains('results-grid')) {
         resultsEl.classList.remove('results-grid');
@@ -22,6 +23,7 @@
     let processedCount = 0;
     let lastBuckets = null;
     let allNormalized = [];
+    let sortKey = 'title-asc';
     const bucketPages = { high: 0, mid: 0, low: 0 };
     const BUCKET_META = [
         { key: 'high', label: 'Best match', shortLabel: 'Best match' },
@@ -62,12 +64,12 @@
     function updateProgress(processed, total) {
         if (!statusEl) return;
         if (!total || total <= 0) {
-            statusEl.textContent = `Scanning Calibre books on Hardcover… (${processed} processed)`;
+            statusEl.textContent = `Scanning books… (${processed} processed)`;
             return;
         }
         const remaining = Math.max(total - processed, 0);
         const etaMinutes = Math.ceil((remaining * STREAM_DELAY_MS) / 60000);
-        statusEl.textContent = `Scanning Calibre books on Hardcover… (${processed}/${total}) · approx ${etaMinutes} min remaining`;
+        statusEl.textContent = `Scanning books… (${processed}/${total}) · approx ${etaMinutes} min remaining`;
     }
 
     function renderSteps(steps) {
@@ -184,7 +186,7 @@
         try {
             source = new EventSource(streamUrl);
             source.addEventListener('open', () => {
-                statusEl.textContent = 'Scanning your Calibre books on Hardcover…';
+                statusEl.textContent = 'Scanning books…';
                 updateProgress(processedCount, totalCalibreBooks || STREAM_TAKE);
             });
             source.addEventListener('step', (ev) => {
@@ -284,6 +286,57 @@
         return { ...rec, matchScore, suggestedId, matchBucket, matchLabel, debug, titleBonusWords, searchKey };
     }
 
+    function primaryAuthor(rec) {
+        const book = rec.book || rec.Book || {};
+        const names = [];
+        const pushName = (val) => {
+            if (!val) return;
+            if (Array.isArray(val)) {
+                val.forEach(pushName);
+                return;
+            }
+            const str = String(val).trim();
+            if (str) names.push(str);
+        };
+
+        pushName(book.author_names || book.authors);
+        if (!names.length && Array.isArray(book.cached_contributors)) {
+            book.cached_contributors.forEach(c => pushName(c?.name));
+        }
+        if (!names.length && Array.isArray(book.contributions)) {
+            book.contributions.forEach(c => pushName(c?.author?.name));
+        }
+
+        return names.length ? names[0] : '';
+    }
+
+    function sortRecommendations(list) {
+        const arr = Array.isArray(list) ? list.slice() : [];
+        const byString = (getter, direction) => (a, b) => {
+            const av = getter(a).toLowerCase();
+            const bv = getter(b).toLowerCase();
+            if (av === bv) return 0;
+            return direction === 'asc' ? (av < bv ? -1 : 1) : (av > bv ? -1 : 1);
+        };
+
+        const getTitle = (rec) => {
+            const book = rec.book || rec.Book || {};
+            return book.title || '';
+        };
+
+        switch (sortKey) {
+            case 'title-desc':
+                return arr.sort(byString(getTitle, 'desc'));
+            case 'author-asc':
+                return arr.sort(byString(primaryAuthor, 'asc'));
+            case 'author-desc':
+                return arr.sort(byString(primaryAuthor, 'desc'));
+            case 'title-asc':
+            default:
+                return arr.sort(byString(getTitle, 'asc'));
+        }
+    }
+
     function bucketize(recs) {
         const grouped = { high: [], mid: [], low: [] };
         recs.forEach(rec => {
@@ -299,8 +352,9 @@
         const filtered = query
             ? allNormalized.filter(r => (r.searchKey || '').includes(query))
             : allNormalized;
+        const sorted = sortRecommendations(filtered);
 
-        lastBuckets = bucketize(filtered);
+        lastBuckets = bucketize(sorted);
         return renderBuckets();
     }
 
@@ -525,14 +579,16 @@
         }
     }
 
-    async function shouldScanRecommendations() {
+    async function shouldScanRecommendations(forceReload) {
+        if (forceReload) return true;
         try {
             const res = await fetch('/hardcover/list-cache/status');
             if (!res.ok) return true;
             const data = await res.json();
             const total = typeof data?.total === 'number' ? data.total : 0;
             const withLists = typeof data?.withLists === 'number' ? data.withLists : 0;
-            if (total === 0 || withLists === 0) {
+            const pending = typeof data?.pending === 'number' ? data.pending : 0;
+            if (pending > 0 || total === 0 || withLists === 0) {
                 return true;
             }
             return false;
@@ -551,6 +607,13 @@
             searchInput.focus();
         });
     }
+    if (sortSelect) {
+        sortSelect.value = sortKey;
+        sortSelect.addEventListener('change', (event) => {
+            sortKey = event.target.value || 'title-asc';
+            applySearchAndRender();
+        });
+    }
 
     async function ensureSuggestedLoaded(forceReload = false) {
         if (loading) return;
@@ -563,7 +626,7 @@
         }
 
         // Decide whether to scan.
-        const needsScan = await shouldScanRecommendations();
+        const needsScan = await shouldScanRecommendations(forceReload);
         if (!needsScan) {
             statusEl.textContent = 'Saved suggestions unavailable and cache already populated. Not reloading.';
             if (reloadBtn) reloadBtn.disabled = false;

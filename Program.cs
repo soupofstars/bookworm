@@ -3,25 +3,46 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Bookworm.Data;
+using Microsoft.Data.Sqlite;
+
+static string ResolveStorageConnectionString(IConfiguration config, string contentRoot)
+{
+    var raw = config["Storage:Database"];
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        raw = "App_Data/bookworm.db";
+    }
+
+    var connBuilder = new SqliteConnectionStringBuilder(raw);
+    var dataSource = connBuilder.DataSource;
+    if (!Path.IsPathRooted(dataSource))
+    {
+        dataSource = Path.GetFullPath(Path.Combine(contentRoot, dataSource));
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(dataSource)!);
+    connBuilder.DataSource = dataSource;
+    return connBuilder.ToString();
+}
 
 var builder = WebApplication.CreateBuilder(args);
+var storageConnection = ResolveStorageConnectionString(builder.Configuration, builder.Environment.ContentRootPath);
 
 // --- Services -------------------------------------------------------------
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-var wantedDb = builder.Configuration["Storage:Database"] ?? "App_Data/bookworm.db";
-builder.Services.AddSingleton(new WantedRepository(wantedDb));
-builder.Services.AddSingleton(new CalibreMirrorRepository(wantedDb));
+builder.Services.AddSingleton(new WantedRepository(storageConnection));
+builder.Services.AddSingleton(new CalibreMirrorRepository(storageConnection));
 builder.Services.AddSingleton<UserSettingsStore>();
 builder.Services.AddSingleton<CalibreRepository>();
 builder.Services.AddSingleton<CalibreCoverService>();
 builder.Services.AddSingleton<CalibreSyncService>();
 builder.Services.AddSingleton<HardcoverListService>();
-builder.Services.AddSingleton(new HardcoverListCacheRepository(wantedDb));
-builder.Services.AddSingleton(new SuggestedRepository(wantedDb));
+builder.Services.AddSingleton(new HardcoverListCacheRepository(storageConnection));
+builder.Services.AddSingleton(new SuggestedRepository(storageConnection));
 builder.Services.AddSingleton<SuggestedRankingService>();
-builder.Services.AddSingleton(new SearchHistoryRepository(wantedDb));
+builder.Services.AddSingleton(new SearchHistoryRepository(storageConnection));
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -1130,7 +1151,8 @@ app.MapGet("/calibre/books", async (
         count = books.Count,
         books,
         lastSync = state.LastSnapshot,
-        sourcePath = state.CalibrePath
+        sourcePath = state.CalibrePath,
+        storagePath = mirrorRepo.DatabasePath
     });
 })
 .WithName("GetCalibreBooks");
@@ -1253,7 +1275,10 @@ app.MapGet("/hardcover/list-cache/status", async (HardcoverListCacheRepository r
     var entries = await repo.GetAllAsync(cancellationToken);
     var total = entries.Count;
     var withLists = entries.Count(e => e.ListCount > 0);
-    return Results.Ok(new { total, withLists });
+    var pending = entries.Count(e =>
+        string.Equals(e.Status, "pending", StringComparison.OrdinalIgnoreCase) ||
+        (string.IsNullOrWhiteSpace(e.Status) && e.ListCount == 0 && e.RecommendationCount == 0));
+    return Results.Ok(new { total, withLists, pending });
 });
 
 app.MapPost("/hardcover/book/resolve", async (HardcoverResolveRequest request, IHttpClientFactory factory, IConfiguration config) =>

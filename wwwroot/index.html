@@ -158,9 +158,15 @@
                 <div class="content-header">
                     <div>
                         <h1>Wanted</h1>
-                        <p>Local wanted list – books you’d like to get. Promote them to your library when you own them.</p>
+                        <p>Books you’d like to get.</p>
                     </div>
                     <div class="section-actions">
+                        <select id="wanted-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <div class="suggested-search wanted-search">
                             <input id="wanted-search-input" type="text" placeholder="Search wanted (title, author, ISBN, tag)" />
                             <button id="wanted-search-clear" class="btn btn-ghost" title="Clear search">×</button>
@@ -177,9 +183,15 @@
                 <div class="content-header">
                     <div>
                         <h1>Hardcover.app</h1>
-                        <p>Books you’ve marked as “Want to read” on Hardcover.</p>
+                        <p></p>
                     </div>
                     <div class="section-actions">
+                        <select id="hardcover-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <div class="suggested-search hardcover-search">
                             <input id="hardcover-search-input" type="text" placeholder="Search want to read (title, author, ISBN, tag)" />
                             <button id="hardcover-search-clear" class="btn btn-ghost" title="Clear search">×</button>
@@ -187,7 +199,6 @@
                     </div>
                 </div>
 
-                <div class="nav-section-title">Want to read</div>
                 <div id="hardcover-wanted-status" class="status">Loading from Hardcover…</div>
                 <div id="hardcover-wanted-results" class="results-grid"></div>
             </div>
@@ -197,9 +208,15 @@
                 <div class="content-header">
                     <div>
                         <h1>Calibre</h1>
-                        <p>Calibre-specific library information will live here.</p>
+                        <p></p>
                     </div>
                     <div class="section-actions">
+                        <select id="calibre-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <div class="suggested-search calibre-search">
                             <input id="calibre-search-input" type="text" placeholder="Search Calibre (title, author, ISBN, tag)" />
                             <button id="calibre-search-clear" class="btn btn-ghost" title="Clear search">×</button>
@@ -217,9 +234,15 @@
                 <div class="content-header">
                     <div>
                         <h1>Suggested</h1>
-                        <p>Recommendations sourced from Hardcover.</p>
+                        <p></p>
                     </div>
                     <div class="section-actions">
+                        <select id="suggested-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <div class="suggested-search">
                             <input id="suggested-search-input" type="text" placeholder="Search suggested (title, author, genre)" />
                             <button id="suggested-search-clear" class="btn btn-ghost" title="Clear search">×</button>
