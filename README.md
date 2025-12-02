@@ -1,6 +1,6 @@
 <div align="center">
   <h1>📚 Bookworm</h1>
-  <p>A Readarr-inspired book companion powered by Open Library & Hardcover.</p>
+  <p>A Readarr-inspired book companion powered by Open Library & Hardcover. Now in BETA 0.1</p>
   <p>
     <img src="https://img.shields.io/badge/.NET-8.0-5C2D91?style=flat-square" alt=".NET 8 badge" />
     <img src="https://img.shields.io/badge/UI-Minimal%20API%20SPA-2563EB?style=flat-square" alt="Minimal SPA badge" />
@@ -10,10 +10,12 @@
 # Bookworm
 
 Bookworm is a **Readarr-inspired book companion** that helps you discover, track, and manage books you want to read.  
-It’s powered by **Open Library** for discovery/search and **Hardcover** for personal “Want to Read” list integration, with **Calibre** library syncing.
+It’s powered by **Open Library** for discovery/search and **Hardcover** for personal integration, with have also included **Calibre** for library syncing.
 
-> Bookworm is **not a downloader and does not directly intergrate with a downloader**.
-> If you want automated downloads, use Calibre’s own web/automation plugins alongside Bookworm.
+> Bookworm is **not a downloader and does not directly intergrate with a torent client or indexer**.
+> If you want automated downloads, use Calibre’s web automation.
+
+> You must have a hardcover api key and calibre to have this app working. We are currently exploring other platforms to make this more optional rather than mandatory.
 
 ---
 
@@ -25,7 +27,7 @@ It’s powered by **Open Library** for discovery/search and **Hardcover** for pe
 - **Manage a Wanted list** (books you’re looking for / planning to read)
 - **Hardcover “Want to Read” integration**:
   - Sync your personal Hardcover “Want to Read” shelf using your own API key
-  - Hardcover is also used to enrich metadata and suggestions (the internal ranking logic is intentionally not exposed)
+  - Hardcover is also used to enrich metadata and suggestions
 - **Calibre integration**:
   - Reads directly from your Calibre **metadata.db**
   - Lets Bookworm understand what you already own so you don’t re-want duplicates
@@ -45,7 +47,7 @@ It’s powered by **Open Library** for discovery/search and **Hardcover** for pe
 ## Requirements
 
 - **Hardcover API key is required** for full functionality.  
-  Without it, Hardcover shelf sync and enrichment won’t work.
+  Without it, Hardcover sync and enrichment won’t work.
 - **Internet access** for Open Library + Hardcover queries
 - **Optional:** Calibre installed locally (only if you want library sync)
 
