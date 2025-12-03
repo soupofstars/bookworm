@@ -14,6 +14,7 @@ public record HardcoverWantCacheEntry(
     DateTime LastUpdatedUtc);
 
 public record HardcoverWantCacheStats(int Count, DateTime? LastUpdatedUtc);
+public record HardcoverWantCacheReplaceResult(int Cached, int Removed);
 
 public class HardcoverWantCacheRepository
 {
@@ -110,6 +111,64 @@ public class HardcoverWantCacheRepository
         }
 
         await tx.CommitAsync(cancellationToken);
+    }
+
+    public async Task<HardcoverWantCacheReplaceResult> ReplaceAllAsync(IEnumerable<JsonElement> books, CancellationToken cancellationToken = default)
+    {
+        var list = books?.ToList() ?? new List<JsonElement>();
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken);
+
+        var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"""
+            INSERT INTO {TableName} (
+                hardcover_id, title, authors_json, isbn13, isbn10, cover_url, book_json, last_updated_utc
+            ) VALUES (
+                @id, @title, @authors, @isbn13, @isbn10, @cover, @book, @updated
+            )
+            ON CONFLICT(hardcover_id) DO UPDATE SET
+                title = excluded.title,
+                authors_json = excluded.authors_json,
+                isbn13 = excluded.isbn13,
+                isbn10 = excluded.isbn10,
+                cover_url = excluded.cover_url,
+                book_json = excluded.book_json,
+                last_updated_utc = excluded.last_updated_utc;
+            """;
+        var pId = cmd.Parameters.Add("@id", SqliteType.Text);
+        var pTitle = cmd.Parameters.Add("@title", SqliteType.Text);
+        var pAuthors = cmd.Parameters.Add("@authors", SqliteType.Text);
+        var pIsbn13 = cmd.Parameters.Add("@isbn13", SqliteType.Text);
+        var pIsbn10 = cmd.Parameters.Add("@isbn10", SqliteType.Text);
+        var pCover = cmd.Parameters.Add("@cover", SqliteType.Text);
+        var pBook = cmd.Parameters.Add("@book", SqliteType.Text);
+        var pUpdated = cmd.Parameters.Add("@updated", SqliteType.Text);
+
+        var ids = new List<string>();
+        var cached = 0;
+        foreach (var book in list)
+        {
+            var id = ReadString(book, "id") ?? ReadString(book, "hardcover_id");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+
+            ids.Add(id!);
+            pId.Value = id!;
+            pTitle.Value = ReadString(book, "title") ?? (object)DBNull.Value;
+            pAuthors.Value = SerializeArray(ReadStringArray(book, "authors"));
+            pIsbn13.Value = ReadString(book, "isbn13") ?? (object)DBNull.Value;
+            pIsbn10.Value = ReadString(book, "isbn10") ?? (object)DBNull.Value;
+            pCover.Value = ReadString(book, "coverUrl") ?? ReadString(book, "image") ?? (object)DBNull.Value;
+            pBook.Value = book.GetRawText();
+            pUpdated.Value = DateTime.UtcNow.ToString("o");
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            cached++;
+        }
+
+        var removed = await DeleteMissingAsync(conn, tx, ids, cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return new HardcoverWantCacheReplaceResult(cached, removed);
     }
 
     public async Task<IReadOnlyList<HardcoverWantCacheEntry>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -224,5 +283,29 @@ public class HardcoverWantCacheRepository
                 if (!string.IsNullOrWhiteSpace(val)) yield return val;
             }
         }
+    }
+
+    private static async Task<int> DeleteMissingAsync(SqliteConnection conn, SqliteTransaction tx, IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+
+        if (ids is null || ids.Count == 0)
+        {
+            cmd.CommandText = $"DELETE FROM {TableName};";
+            return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var placeholders = ids.Select((_, i) => $"@id{i}").ToArray();
+        cmd.CommandText = $"""
+            DELETE FROM {TableName}
+            WHERE hardcover_id NOT IN ({string.Join(",", placeholders)});
+            """;
+        for (var i = 0; i < ids.Count; i++)
+        {
+            cmd.Parameters.AddWithValue($"@id{i}", ids.ElementAt(i));
+        }
+
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }

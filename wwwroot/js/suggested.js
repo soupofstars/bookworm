@@ -128,7 +128,7 @@
                 const stats = inspected != null && matched != null
                     ? `Checked ${matched} of ${inspected} Calibre books on Hardcover; no list neighbors found. `
                     : '';
-                statusEl.textContent = `${stats}No people-list recommendations yet. Sync Calibre and ensure your Hardcover key is set.`;
+                statusEl.textContent = `${stats}No people-list recommendations yet. Ensure Calibre has synced and your Hardcover key is set.`;
                 loaded = true;
                 loading = false;
                 if (reloadBtn) reloadBtn.disabled = false;

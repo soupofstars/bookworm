@@ -20,7 +20,8 @@ public record CalibreMirrorBook(
     string? Series,
     double? FileSizeMb,
     string? Description,
-    string? CoverUrl);
+    string? CoverUrl,
+    string? HardcoverId = null);
 
 public record CalibreSyncState(string? CalibrePath, DateTime? LastSnapshot);
 public record CalibreMirrorReplaceResult(
@@ -243,7 +244,8 @@ public class CalibreMirrorRepository
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetDouble(13),
                 reader.IsDBNull(14) ? null : reader.GetString(14),
-                reader.IsDBNull(15) ? null : reader.GetString(15)
+                reader.IsDBNull(15) ? null : reader.GetString(15),
+                null
             ));
         }
 

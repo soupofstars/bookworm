@@ -16,6 +16,8 @@ public record HardcoverListCacheEntry(
     string? ListsJson,
     string? RecommendationsJson);
 
+public record HardcoverListCacheSyncResult(int Added, int Updated, int Deleted);
+
 public class HardcoverListCacheRepository
 {
     private readonly string _connectionString;
@@ -174,6 +176,72 @@ public class HardcoverListCacheRepository
         }
 
         return null;
+    }
+
+    public async Task<HardcoverListCacheSyncResult> SyncWithCalibreAsync(IEnumerable<CalibreMirrorBook> calibreBooks, CancellationToken cancellationToken = default)
+    {
+        var list = calibreBooks?.ToList() ?? new List<CalibreMirrorBook>();
+        var keepIds = new HashSet<int>(list.Select(b => b.Id));
+        var existing = await GetAllAsync(cancellationToken);
+        var existingMap = existing.ToDictionary(e => e.CalibreId);
+
+        var deleted = await DeleteMissingAsync(keepIds, cancellationToken);
+        var added = 0;
+        var updated = 0;
+
+        foreach (var book in list)
+        {
+            if (existingMap.TryGetValue(book.Id, out var current))
+            {
+                if (!string.Equals(current.CalibreTitle, book.Title, StringComparison.Ordinal))
+                {
+                    current = current with { CalibreTitle = book.Title };
+                    updated++;
+                    await UpsertAsync(current, cancellationToken);
+                }
+                continue;
+            }
+
+            var entry = new HardcoverListCacheEntry(
+                book.Id,
+                book.Title,
+                null,
+                null,
+                0,
+                0,
+                DateTime.UtcNow,
+                "pending",
+                null,
+                null,
+                null);
+            added++;
+            await UpsertAsync(entry, cancellationToken);
+        }
+
+        return new HardcoverListCacheSyncResult(added, updated, deleted);
+    }
+
+    private async Task<int> DeleteMissingAsync(IReadOnlyCollection<int> keepIds, CancellationToken cancellationToken)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = conn.CreateCommand();
+
+        if (keepIds.Count == 0)
+        {
+            cmd.CommandText = "DELETE FROM hardcover_list_cache;";
+            return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var parameters = keepIds.Select((id, idx) => new { id, name = $"@id{idx}" }).ToList();
+        var placeholders = string.Join(",", parameters.Select(p => p.name));
+        cmd.CommandText = $"DELETE FROM hardcover_list_cache WHERE calibre_id NOT IN ({placeholders});";
+        foreach (var p in parameters)
+        {
+            cmd.Parameters.AddWithValue(p.name, p.id);
+        }
+
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static void EnsureColumn(SqliteConnection connection, string table, string column, string type)

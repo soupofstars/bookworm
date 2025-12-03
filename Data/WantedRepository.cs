@@ -8,6 +8,8 @@ public record WantedBookResponse(string Key, JsonElement Book);
 
 public class WantedRepository
 {
+    private const string TableName = "bookworm_wanted_books";
+    private const string LegacyTableName = "wanted_books";
     private readonly string? _connectionString;
     private readonly List<WantedBookStorage> _memory = new();
     private readonly object _gate = new();
@@ -44,9 +46,11 @@ public class WantedRepository
     {
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
+        MigrateLegacyTable(conn);
+
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS wanted_books (
+        cmd.CommandText = $"""
+            CREATE TABLE IF NOT EXISTS {TableName} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_key TEXT NOT NULL UNIQUE,
                 payload TEXT NOT NULL,
@@ -55,6 +59,27 @@ public class WantedRepository
             );
             """;
         cmd.ExecuteNonQuery();
+    }
+
+    private static bool TableExists(SqliteConnection conn, string tableName)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = @name LIMIT 1;";
+        cmd.Parameters.AddWithValue("@name", tableName);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read();
+    }
+
+    private static void MigrateLegacyTable(SqliteConnection conn)
+    {
+        var legacyExists = TableExists(conn, LegacyTableName);
+        var targetExists = TableExists(conn, TableName);
+        if (legacyExists && !targetExists)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {LegacyTableName} RENAME TO {TableName};";
+            cmd.ExecuteNonQuery();
+        }
     }
 
     public async Task<IReadOnlyList<WantedBookResponse>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -71,7 +96,7 @@ public class WantedRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT book_key, payload FROM wanted_books ORDER BY created_at DESC";
+        cmd.CommandText = $"SELECT book_key, payload FROM {TableName} ORDER BY created_at DESC";
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -107,8 +132,8 @@ public class WantedRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO wanted_books (book_key, payload, created_at, updated_at)
+        cmd.CommandText = $"""
+            INSERT INTO {TableName} (book_key, payload, created_at, updated_at)
             VALUES (@key, @payload, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(book_key) DO UPDATE SET
                 payload = excluded.payload,
@@ -137,7 +162,7 @@ public class WantedRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM wanted_books WHERE book_key = @key";
+        cmd.CommandText = $"DELETE FROM {TableName} WHERE book_key = @key";
         cmd.Parameters.AddWithValue("@key", key);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }

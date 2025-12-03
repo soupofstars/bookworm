@@ -125,19 +125,21 @@ body {
 .search-bar {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 1rem;
+    margin: 0 auto 1rem;
+    max-width: 520px;
+    justify-content: center;
 }
 .search-bar input[type="text"] {
-    flex: 1;
-    padding: 0.5rem 0.6rem;
+    flex: 1 1 380px;
+    padding: 0.45rem 0.6rem;
     border-radius: 6px;
-    border: 1px solid var(--border);
+    border: 1px solid #96a1b3;
     background: #0b1120;
     color: var(--text);
     font-size: 0.9rem;
 }
 .search-bar button {
-    padding: 0.5rem 0.9rem;
+    padding: 0.45rem 0.9rem;
     border-radius: 6px;
     border: none;
     background: var(--accent);
@@ -152,7 +154,24 @@ body {
 .status {
     font-size: 0.85rem;
     color: var(--text-muted);
+    margin-bottom: 25px;
+}
+.search-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
     margin-bottom: 0.75rem;
+}
+.hardcover-status-row {
+    padding-bottom: 0.5rem;
+}
+#library-status {
+    margin-bottom: 0.75rem;
+}
+.hardcover-status-row {
+    padding-bottom: 0.5rem;
 }
 
 .results-grid {
@@ -326,8 +345,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
+    gap: 0.75rem;
+    margin-top: 0;
 }
 .search-pagination-info {
     color: var(--text-muted);
@@ -949,6 +968,128 @@ body {
 }
 .isbn-pill-row {
     margin-bottom: 0.35rem;
+}
+
+.log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.log-list {
+    display: block;
+}
+.log-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(17,23,39,0.5);
+    box-shadow: 0 12px 26px rgba(0,0,0,0.4);
+}
+.log-row {
+    display: grid;
+    grid-template-columns: 180px 160px 120px 1fr 90px;
+    align-items: stretch;
+    border-bottom: 1px solid var(--border);
+}
+.log-row:last-child {
+    border-bottom: none;
+}
+.log-row-head {
+    background: rgba(255,255,255,0.02);
+    font-weight: 700;
+    color: var(--text-muted);
+}
+.log-cell {
+    padding: 0.65rem 0.8rem;
+    font-size: 0.9rem;
+    color: var(--text);
+    min-width: 0;
+}
+.log-col-message {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.log-col-source,
+.log-col-level,
+.log-col-time {
+    color: var(--text-muted);
+}
+.log-col-details {
+    text-align: right;
+}
+.log-details-row {
+    grid-template-columns: 1fr;
+    background: #0f172a;
+}
+.log-col-details-full {
+    grid-column: 1 / -1;
+    padding: 0.2rem 0.85rem 0.8rem;
+}
+.log-level {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.log-level-info {
+    background: rgba(59,130,246,0.16);
+    color: #93c5fd;
+}
+.log-level-success {
+    background: rgba(16,185,129,0.16);
+    color: #6ee7b7;
+}
+.log-level-warning {
+    background: rgba(251,191,36,0.18);
+    color: #fcd34d;
+}
+.log-level-error {
+    background: rgba(248,113,113,0.18);
+    color: #fca5a5;
+}
+.log-details {
+    margin: 0.35rem 0 0;
+    padding: 0.65rem 0.75rem;
+    background: #0b1325;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: #d1d5db;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.btn-small {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.55rem;
+}
+.hc-status {
+    display: inline-block;
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.78rem;
+}
+.hc-status-neutral {
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+}
+@media (max-width: 1100px) {
+    .log-row {
+        grid-template-columns: 160px 140px 110px 1fr 90px;
+    }
+}
+@media (max-width: 900px) {
+    .log-row {
+        grid-template-columns: 150px 120px 100px 1fr 80px;
+    }
+    .log-col-message {
+        font-size: 0.85rem;
+    }
 }
 
 .hidden { display: none; }

@@ -6,6 +6,9 @@ public record SearchHistoryEntry(string Query, int ResultCount, DateTimeOffset L
 
 public class SearchHistoryRepository
 {
+    private const string BookTable = "book_search_history";
+    private const string AuthorTable = "author_search_history";
+    private const string IsbnTable = "isbn_search_history";
     private readonly string? _connectionString;
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_connectionString);
@@ -38,9 +41,16 @@ public class SearchHistoryRepository
     {
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
+        EnsureTable(conn, BookTable);
+        EnsureTable(conn, AuthorTable);
+        EnsureTable(conn, IsbnTable);
+    }
+
+    private static void EnsureTable(SqliteConnection conn, string tableName)
+    {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS book_search_history (
+        cmd.CommandText = $"""
+            CREATE TABLE IF NOT EXISTS {tableName} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL UNIQUE,
                 result_count INTEGER NOT NULL DEFAULT 0,
@@ -50,7 +60,31 @@ public class SearchHistoryRepository
         cmd.ExecuteNonQuery();
     }
 
-    public async Task LogAsync(string query, int resultCount, CancellationToken cancellationToken = default)
+    public Task LogAsync(string query, int resultCount, CancellationToken cancellationToken = default)
+        => LogBookAsync(query, resultCount, cancellationToken);
+
+    public Task LogBookAsync(string query, int resultCount, CancellationToken cancellationToken = default)
+        => LogToTableAsync(BookTable, query, resultCount, cancellationToken);
+
+    public Task LogAuthorAsync(string query, int resultCount, CancellationToken cancellationToken = default)
+        => LogToTableAsync(AuthorTable, query, resultCount, cancellationToken);
+
+    public Task LogIsbnAsync(string query, int resultCount, CancellationToken cancellationToken = default)
+        => LogToTableAsync(IsbnTable, query, resultCount, cancellationToken);
+
+    public Task<IReadOnlyList<SearchHistoryEntry>> GetRecentAuthorsAsync(int take = 10, CancellationToken cancellationToken = default)
+        => GetRecentFromTableAsync(AuthorTable, take, cancellationToken);
+
+    public Task<IReadOnlyList<SearchHistoryEntry>> GetRecentIsbnAsync(int take = 10, CancellationToken cancellationToken = default)
+        => GetRecentFromTableAsync(IsbnTable, take, cancellationToken);
+
+    public Task DeleteAuthorAsync(string query, CancellationToken cancellationToken = default)
+        => DeleteFromTableAsync(AuthorTable, query, cancellationToken);
+
+    public Task DeleteIsbnAsync(string query, CancellationToken cancellationToken = default)
+        => DeleteFromTableAsync(IsbnTable, query, cancellationToken);
+
+    private async Task LogToTableAsync(string tableName, string query, int resultCount, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query)) return;
         var trimmed = query.Trim();
@@ -59,8 +93,8 @@ public class SearchHistoryRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO book_search_history (query, result_count, last_searched)
+        cmd.CommandText = $"""
+            INSERT INTO {tableName} (query, result_count, last_searched)
             VALUES (@query, @count, CURRENT_TIMESTAMP)
             ON CONFLICT(query) DO UPDATE SET
                 result_count = excluded.result_count,
@@ -73,6 +107,11 @@ public class SearchHistoryRepository
 
     public async Task<IReadOnlyList<SearchHistoryEntry>> GetRecentAsync(int take = 10, CancellationToken cancellationToken = default)
     {
+        return await GetRecentFromTableAsync(BookTable, take, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<SearchHistoryEntry>> GetRecentFromTableAsync(string tableName, int take, CancellationToken cancellationToken = default)
+    {
         take = Math.Clamp(take, 1, 50);
 
         if (!IsConfigured) return Array.Empty<SearchHistoryEntry>();
@@ -81,7 +120,7 @@ public class SearchHistoryRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT query, result_count, last_searched FROM book_search_history ORDER BY datetime(last_searched) DESC LIMIT @take";
+        cmd.CommandText = $"SELECT query, result_count, last_searched FROM {tableName} ORDER BY datetime(last_searched) DESC LIMIT @take";
         cmd.Parameters.AddWithValue("@take", take);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -100,11 +139,16 @@ public class SearchHistoryRepository
 
     public async Task DeleteAsync(string query, CancellationToken cancellationToken = default)
     {
+        await DeleteFromTableAsync(BookTable, query, cancellationToken);
+    }
+
+    private async Task DeleteFromTableAsync(string tableName, string query, CancellationToken cancellationToken = default)
+    {
         if (string.IsNullOrWhiteSpace(query) || !IsConfigured) return;
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM book_search_history WHERE query = @query";
+        cmd.CommandText = $"DELETE FROM {tableName} WHERE query = @query";
         cmd.Parameters.AddWithValue("@query", query.Trim());
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }

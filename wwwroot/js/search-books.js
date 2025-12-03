@@ -113,8 +113,10 @@
         }
         el.classList.remove('hidden');
         if (info) {
-            const showing = state.results ? state.results.length : 0;
-            info.textContent = `Page ${page} of ${totalPages} · Showing ${showing} of ${total} results`;
+            const showing = total
+                ? Math.min(page * pageSize, total)
+                : (state.results ? state.results.length : 0);
+            info.textContent = `Page ${page} of ${totalPages} · Showing ${showing} of ${total || showing} results`;
         }
         if (prev) prev.disabled = page <= 1;
         if (next) next.disabled = page >= totalPages;
@@ -192,6 +194,11 @@
         const historyContainer = panel.querySelector('.search-history');
         if (!form || !input || !statusEl || !resultsEl) return;
 
+        const statusRow = document.createElement('div');
+        statusRow.className = 'search-status-row';
+        statusEl.parentNode.insertBefore(statusRow, statusEl);
+        statusRow.appendChild(statusEl);
+
         const paginationEl = document.createElement('div');
         paginationEl.className = 'search-pagination hidden';
         paginationEl.innerHTML = `
@@ -199,7 +206,7 @@
             <div class="search-pagination-info"></div>
             <button type="button" class="btn btn-ghost search-page-next">Next</button>
         `;
-        resultsEl.parentNode.insertBefore(paginationEl, resultsEl);
+        statusRow.appendChild(paginationEl);
         const pagination = {
             el: paginationEl,
             info: paginationEl.querySelector('.search-pagination-info'),

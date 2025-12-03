@@ -10,6 +10,7 @@
     let loaded = false;
     let loading = false;
     let cachedBooks = [];
+    let cachedFromDb = [];
     let lastLoadPromise = null;
     let searchQuery = '';
     let sortKey = 'title-asc';
@@ -277,6 +278,15 @@
                 if (typeof app.handleHardcoverWantedBooks === 'function') {
                     app.handleHardcoverWantedBooks(cachedBooks);
                 }
+                try {
+                    await fetch('/hardcover/want-to-read/cache', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ books: cachedBooks })
+                    });
+                } catch (err) {
+                    console.warn('Failed to cache Hardcover want-to-read', err);
+                }
                 return cachedBooks;
             } catch (err) {
                 console.error(err);
@@ -288,6 +298,24 @@
         })();
 
         return lastLoadPromise;
+    }
+
+    async function loadCachedBooks() {
+        try {
+            const res = await fetch('/hardcover/want-to-read/cache');
+            if (!res.ok) return;
+            const data = await res.json();
+            const items = Array.isArray(data?.books) ? data.books : [];
+            if (!items.length) return;
+            cachedFromDb = items.map(normalizeHardcoverBook);
+            if (!cachedBooks.length) {
+                cachedBooks = cachedFromDb.slice();
+                loaded = true;
+                renderBooks();
+            }
+        } catch (err) {
+            console.warn('Failed to load cached Hardcover want-to-read', err);
+        }
     }
 
     window.bookwormHardcover = {
@@ -328,4 +356,8 @@
             renderBooks();
         });
     }
+
+    loadCachedBooks().finally(() => {
+        loadHardcoverWanted();
+    });
 })();

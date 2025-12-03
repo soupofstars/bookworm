@@ -57,6 +57,7 @@ public class BookshelfRepository
             );
             """;
         cmd.ExecuteNonQuery();
+        EnsureColumn(conn, TableName, "hardcover_id", "TEXT");
     }
 
     public async Task ReplaceAllAsync(IEnumerable<CalibreMirrorBook> books, CancellationToken cancellationToken = default)
@@ -66,10 +67,9 @@ public class BookshelfRepository
         await conn.OpenAsync(cancellationToken);
         await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken);
 
-        var delete = conn.CreateCommand();
-        delete.Transaction = tx;
-        delete.CommandText = $"DELETE FROM {TableName};";
-        await delete.ExecuteNonQueryAsync(cancellationToken);
+        var existingHardcoverIds = await LoadHardcoverIdsAsync(conn, cancellationToken);
+        var keepIds = new HashSet<int>(list.Select(b => b.Id));
+        await DeleteMissingAsync(conn, tx, keepIds, cancellationToken);
 
         var insert = conn.CreateCommand();
         insert.Transaction = tx;
@@ -77,11 +77,29 @@ public class BookshelfRepository
             INSERT INTO {TableName} (
                 id, title, authors_json, isbn, rating, added_at, published_at, path,
                 has_cover, formats_json, tags_json, publisher, series, file_size_mb,
-                description, cover_url, updated_at
+                description, cover_url, hardcover_id, updated_at
             ) VALUES (
                 @id,@title,@authors,@isbn,@rating,@added,@published,@path,
-                @hasCover,@formats,@tags,@publisher,@series,@size,@description,@coverUrl,@updated
-            );
+                @hasCover,@formats,@tags,@publisher,@series,@size,@description,@coverUrl,@hardcoverId,@updated
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                authors_json = excluded.authors_json,
+                isbn = excluded.isbn,
+                rating = excluded.rating,
+                added_at = excluded.added_at,
+                published_at = excluded.published_at,
+                path = excluded.path,
+                has_cover = excluded.has_cover,
+                formats_json = excluded.formats_json,
+                tags_json = excluded.tags_json,
+                publisher = excluded.publisher,
+                series = excluded.series,
+                file_size_mb = excluded.file_size_mb,
+                description = excluded.description,
+                cover_url = excluded.cover_url,
+                hardcover_id = COALESCE({TableName}.hardcover_id, excluded.hardcover_id),
+                updated_at = excluded.updated_at;
             """;
         var pId = insert.Parameters.Add("@id", SqliteType.Integer);
         var pTitle = insert.Parameters.Add("@title", SqliteType.Text);
@@ -99,6 +117,7 @@ public class BookshelfRepository
         var pSize = insert.Parameters.Add("@size", SqliteType.Real);
         var pDescription = insert.Parameters.Add("@description", SqliteType.Text);
         var pCoverUrl = insert.Parameters.Add("@coverUrl", SqliteType.Text);
+        var pHardcoverId = insert.Parameters.Add("@hardcoverId", SqliteType.Text);
         var pUpdated = insert.Parameters.Add("@updated", SqliteType.Text);
 
         foreach (var book in list)
@@ -119,6 +138,12 @@ public class BookshelfRepository
             pSize.Value = (object?)book.FileSizeMb ?? DBNull.Value;
             pDescription.Value = (object?)book.Description ?? DBNull.Value;
             pCoverUrl.Value = (object?)book.CoverUrl ?? DBNull.Value;
+            var resolvedHardcoverId = !string.IsNullOrWhiteSpace(book.HardcoverId)
+                ? book.HardcoverId
+                : (existingHardcoverIds.TryGetValue(book.Id, out var hid) ? hid : null);
+            pHardcoverId.Value = !string.IsNullOrWhiteSpace(resolvedHardcoverId)
+                ? resolvedHardcoverId
+                : (object)DBNull.Value;
             pUpdated.Value = DateTime.UtcNow.ToString("o");
             await insert.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -136,14 +161,14 @@ public class BookshelfRepository
             ? $"""
                 SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
                        has_cover, formats_json, tags_json, publisher, series, file_size_mb,
-                       description, cover_url
+                       description, cover_url, hardcover_id
                 FROM {TableName}
                 ORDER BY COALESCE(added_at, updated_at) DESC;
                 """
             : $"""
                 SELECT id, title, authors_json, isbn, rating, added_at, published_at, path,
                        has_cover, formats_json, tags_json, publisher, series, file_size_mb,
-                       description, cover_url
+                       description, cover_url, hardcover_id
                 FROM {TableName}
                 ORDER BY COALESCE(added_at, updated_at) DESC
                 LIMIT @take;
@@ -176,11 +201,33 @@ public class BookshelfRepository
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetDouble(13),
                 reader.IsDBNull(14) ? null : reader.GetString(14),
-                reader.IsDBNull(15) ? null : reader.GetString(15)
+                reader.IsDBNull(15) ? null : reader.GetString(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16)
             ));
         }
 
         return results;
+    }
+
+    public async Task<IReadOnlyDictionary<int, string>> GetHardcoverIdsAsync(CancellationToken cancellationToken = default)
+    {
+        var map = new Dictionary<int, string>();
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT id, hardcover_id FROM {TableName} WHERE hardcover_id IS NOT NULL;";
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var id = reader.GetInt32(0);
+            var hid = reader.IsDBNull(1) ? null : reader.GetString(1);
+            if (!string.IsNullOrWhiteSpace(hid) && IsNumericId(hid))
+            {
+                map[id] = hid;
+            }
+        }
+
+        return map;
     }
 
     public async Task<BookshelfStats> GetStatsAsync(CancellationToken cancellationToken = default)
@@ -212,6 +259,22 @@ public class BookshelfRepository
         }
 
         return new BookshelfStats(0, null);
+    }
+
+    public async Task UpdateHardcoverIdAsync(int calibreId, string? hardcoverId, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE {TableName}
+            SET hardcover_id = @hid, updated_at = @updated
+            WHERE id = @id;
+            """;
+        cmd.Parameters.AddWithValue("@hid", (object?)hardcoverId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@updated", DateTime.UtcNow.ToString("o"));
+        cmd.Parameters.AddWithValue("@id", calibreId);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static string SerializeArray(string[] values)
@@ -247,4 +310,77 @@ public class BookshelfRepository
         if (raw is long ticks) return DateTimeOffset.FromUnixTimeSeconds(ticks).UtcDateTime;
         return null;
     }
+
+    private static async Task<Dictionary<int, string?>> LoadHardcoverIdsAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        var map = new Dictionary<int, string?>();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT id, hardcover_id FROM {TableName};";
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var id = reader.GetInt32(0);
+            var hid = reader.IsDBNull(1) ? null : reader.GetString(1);
+            if (!string.IsNullOrWhiteSpace(hid) && IsNumericId(hid))
+            {
+                map[id] = hid;
+            }
+        }
+
+        return map;
+    }
+
+    private static async Task DeleteMissingAsync(SqliteConnection conn, SqliteTransaction tx, IReadOnlyCollection<int> keepIds, CancellationToken cancellationToken)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+
+        if (keepIds.Count == 0)
+        {
+            cmd.CommandText = $"DELETE FROM {TableName};";
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            return;
+        }
+
+        var parameters = keepIds.Select((id, idx) => new { id, name = $"@id{idx}" }).ToList();
+        var placeholders = string.Join(",", parameters.Select(p => p.name));
+        cmd.CommandText = $"DELETE FROM {TableName} WHERE id NOT IN ({placeholders});";
+        foreach (var p in parameters)
+        {
+            cmd.Parameters.AddWithValue(p.name, p.id);
+        }
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void EnsureColumn(SqliteConnection connection, string table, string column, string type)
+    {
+        if (ColumnExists(connection, table, column))
+        {
+            return;
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type};";
+        alter.ExecuteNonQuery();
+    }
+
+    private static bool ColumnExists(SqliteConnection connection, string table, string column)
+    {
+        using var check = connection.CreateCommand();
+        check.CommandText = $"PRAGMA table_info({table});";
+        using var reader = check.ExecuteReader();
+        while (reader.Read())
+        {
+            var existing = reader.GetString(reader.GetOrdinal("name"));
+            if (string.Equals(existing, column, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsNumericId(string value) => int.TryParse(value, out _);
 }

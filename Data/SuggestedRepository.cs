@@ -11,6 +11,8 @@ public record SuggestedHideRequest(int[] Ids);
 
 public class SuggestedRepository
 {
+    private const string TableName = "bookworm_suggested_books";
+    private const string LegacyTableName = "suggested";
     private readonly string _connectionString;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -37,9 +39,11 @@ public class SuggestedRepository
     {
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
+        MigrateLegacyTable(conn);
+
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS suggested (
+        cmd.CommandText = $"""
+            CREATE TABLE IF NOT EXISTS {TableName} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hardcover_key TEXT,
                 book_json TEXT NOT NULL,
@@ -54,7 +58,7 @@ public class SuggestedRepository
 
         // If old schema with book_key exists, rebuild the table without that primary key.
         using var info = conn.CreateCommand();
-        info.CommandText = "PRAGMA table_info(suggested);";
+        info.CommandText = $"PRAGMA table_info({TableName});";
         using var reader = info.ExecuteReader();
         var hasBookKey = false;
         var hasId = false;
@@ -71,8 +75,8 @@ public class SuggestedRepository
             using (var create = conn.CreateCommand())
             {
                 create.Transaction = tx;
-                create.CommandText = """
-                    CREATE TABLE suggested_new (
+                create.CommandText = $"""
+                    CREATE TABLE {TableName}_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         hardcover_key TEXT,
                         book_json TEXT NOT NULL,
@@ -89,8 +93,8 @@ public class SuggestedRepository
             using (var copy = conn.CreateCommand())
             {
                 copy.Transaction = tx;
-                copy.CommandText = """
-                    INSERT INTO suggested_new (hardcover_key, book_json, base_genres_json, reasons_json, hidden, created_at, updated_at)
+                copy.CommandText = $"""
+                    INSERT INTO {TableName}_new (hardcover_key, book_json, base_genres_json, reasons_json, hidden, created_at, updated_at)
                     SELECT
                         NULL,
                         book_json,
@@ -99,7 +103,7 @@ public class SuggestedRepository
                         0,
                         COALESCE(created_at, CURRENT_TIMESTAMP),
                         COALESCE(updated_at, CURRENT_TIMESTAMP)
-                    FROM suggested;
+                    FROM {TableName};
                     """;
                 try { copy.ExecuteNonQuery(); } catch { /* best effort */ }
             }
@@ -107,14 +111,14 @@ public class SuggestedRepository
             using (var drop = conn.CreateCommand())
             {
                 drop.Transaction = tx;
-                drop.CommandText = "DROP TABLE suggested;";
+                drop.CommandText = $"DROP TABLE {TableName};";
                 drop.ExecuteNonQuery();
             }
 
             using (var rename = conn.CreateCommand())
             {
                 rename.Transaction = tx;
-                rename.CommandText = "ALTER TABLE suggested_new RENAME TO suggested;";
+                rename.CommandText = $"ALTER TABLE {TableName}_new RENAME TO {TableName};";
                 rename.ExecuteNonQuery();
             }
 
@@ -123,7 +127,7 @@ public class SuggestedRepository
 
         // Add hidden column if missing
         using var hiddenCheck = conn.CreateCommand();
-        hiddenCheck.CommandText = "PRAGMA table_info(suggested);";
+        hiddenCheck.CommandText = $"PRAGMA table_info({TableName});";
         using var hiddenReader = hiddenCheck.ExecuteReader();
         var hasHidden = false;
         while (hiddenReader.Read())
@@ -139,8 +143,29 @@ public class SuggestedRepository
         if (!hasHidden)
         {
             using var addHidden = conn.CreateCommand();
-            addHidden.CommandText = "ALTER TABLE suggested ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;";
+            addHidden.CommandText = $"ALTER TABLE {TableName} ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;";
             addHidden.ExecuteNonQuery();
+        }
+    }
+
+    private static bool TableExists(SqliteConnection conn, string tableName)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = @name LIMIT 1;";
+        cmd.Parameters.AddWithValue("@name", tableName);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read();
+    }
+
+    private static void MigrateLegacyTable(SqliteConnection conn)
+    {
+        var legacyExists = TableExists(conn, LegacyTableName);
+        var targetExists = TableExists(conn, TableName);
+        if (legacyExists && !targetExists)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {LegacyTableName} RENAME TO {TableName};";
+            cmd.ExecuteNonQuery();
         }
     }
 
@@ -156,7 +181,7 @@ public class SuggestedRepository
         await using (var loadCmd = conn.CreateCommand())
         {
             loadCmd.Transaction = tx;
-            loadCmd.CommandText = "SELECT hardcover_key, book_json FROM suggested;";
+            loadCmd.CommandText = $"SELECT hardcover_key, book_json FROM {TableName};";
             await using var reader = await loadCmd.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -182,8 +207,8 @@ public class SuggestedRepository
 
         var insertCmd = conn.CreateCommand();
         insertCmd.Transaction = tx;
-        insertCmd.CommandText = """
-            INSERT INTO suggested (hardcover_key, book_json, base_genres_json, reasons_json, created_at, updated_at)
+        insertCmd.CommandText = $"""
+            INSERT INTO {TableName} (hardcover_key, book_json, base_genres_json, reasons_json, created_at, updated_at)
             VALUES (@hkey, @book, @genres, @reasons, @created, @updated);
             """;
         var pHKey = insertCmd.Parameters.Add("@hkey", SqliteType.Text);
@@ -237,9 +262,9 @@ public class SuggestedRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT id, hardcover_key, book_json, base_genres_json, reasons_json
-            FROM suggested
+            FROM {TableName}
             WHERE hidden = 0
             ORDER BY updated_at DESC, created_at DESC;
             """;
@@ -306,7 +331,7 @@ public class SuggestedRepository
 
         var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "UPDATE suggested SET hidden = 1, updated_at = @updated WHERE id IN (" + string.Join(",", ids.Select((_, i) => $"@id{i}")) + ");";
+        cmd.CommandText = $"UPDATE {TableName} SET hidden = 1, updated_at = @updated WHERE id IN (" + string.Join(",", ids.Select((_, i) => $"@id{i}")) + ");";
         var now = DateTime.UtcNow.ToString("o");
         cmd.Parameters.AddWithValue("@updated", now);
         var idx = 0;
@@ -331,7 +356,7 @@ public class SuggestedRepository
 
         var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "DELETE FROM suggested WHERE id IN (" + string.Join(",", toDelete.Select((_, i) => $"@id{i}")) + ");";
+        cmd.CommandText = $"DELETE FROM {TableName} WHERE id IN (" + string.Join(",", toDelete.Select((_, i) => $"@id{i}")) + ");";
         for (var i = 0; i < toDelete.Count; i++)
         {
             cmd.Parameters.AddWithValue($"@id{i}", toDelete[i]);

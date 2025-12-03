@@ -85,6 +85,7 @@ public class CalibreRepository
         var identifierJoin = hasIdentifiers
             ? "LEFT JOIN identifiers i ON i.book = b.id AND LOWER(i.type) IN ('isbn','isbn10','isbn-10','isbn13','isbn-13','isbn_10','isbn_13')"
             : string.Empty;
+        var unlimited = take <= 0;
         var sql = $"""
             SELECT
                 b.id,
@@ -114,13 +115,16 @@ public class CalibreRepository
             {identifierJoin}
             GROUP BY b.id
             ORDER BY b.timestamp DESC
-            LIMIT @take;
+            {(unlimited ? string.Empty : "LIMIT @take;")}
             """;
 
         var results = new List<CalibreBook>();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
-        cmd.Parameters.AddWithValue("@take", take);
+        if (!unlimited)
+        {
+            cmd.Parameters.AddWithValue("@take", take);
+        }
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {

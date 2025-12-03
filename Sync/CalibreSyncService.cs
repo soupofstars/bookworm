@@ -33,6 +33,7 @@ public class CalibreSyncService
     private readonly HardcoverWantCacheRepository _hardcoverWantCache;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<CalibreSyncService> _logger;
+    private readonly ActivityLogService _activityLog;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public CalibreSyncService(
@@ -48,7 +49,8 @@ public class CalibreSyncService
         WantedRepository wanted,
         HardcoverWantCacheRepository hardcoverWantCache,
         IHttpClientFactory httpClientFactory,
-        ILogger<CalibreSyncService> logger)
+        ILogger<CalibreSyncService> logger,
+        ActivityLogService activityLog)
     {
         _source = source;
         _mirror = mirror;
@@ -63,6 +65,7 @@ public class CalibreSyncService
         _hardcoverWantCache = hardcoverWantCache;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _activityLog = activityLog;
     }
 
     public async Task<CalibreSyncResult> SyncAsync(CancellationToken cancellationToken = default)
@@ -121,7 +124,8 @@ public class CalibreSyncService
                     book.Series,
                     book.FileSizeMb,
                     book.Description,
-                    coverUrl));
+                    coverUrl,
+                    null));
             }
 
             var snapshot = DateTime.UtcNow;
@@ -182,6 +186,9 @@ public class CalibreSyncService
 
         if (pendingIds.Count == 0) return;
 
+        var processed = 0;
+        var matched = 0;
+        var totalRecommendations = 0;
         foreach (var book in books.Where(b => pendingIds.Contains(b.Id)))
         {
             try
@@ -211,6 +218,10 @@ public class CalibreSyncService
                     RecommendationsJson: _listCache.Serialize(result.Recommendations)
                 ), cancellationToken);
 
+                processed++;
+                if (matchedHardcover) matched++;
+                totalRecommendations += result.Recommendations.Count;
+
                 if (result.Recommendations.Count > 0)
                 {
                     var suggestedEntries = result.Recommendations.Select(r => new SuggestedEntry(
@@ -225,7 +236,18 @@ public class CalibreSyncService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to process Hardcover lists for Calibre book {BookId}", book.Id);
+                await _activityLog.WarnAsync("Suggested", "Failed to process Hardcover lists for Calibre book.", new { bookId = book.Id, error = ex.Message });
             }
+        }
+
+        if (processed > 0)
+        {
+            await _activityLog.InfoAsync("Suggested", "Processed Calibre books for Hardcover list checks.", new
+            {
+                processed,
+                matchedHardcover = matched,
+                recommendationsAdded = totalRecommendations
+            });
         }
     }
 

@@ -51,6 +51,9 @@
 
         <div class="nav-section">
             <div class="nav-section-title">System</div>
+            <div class="nav-link" data-section="logs">
+                <span class="nav-dot"></span> Activity log
+            </div>
             <div class="nav-link" data-section="settings">
                 <span class="nav-dot"></span> Settings
             </div>
@@ -104,6 +107,10 @@
                     </form>
 
                     <div class="status search-status">Ready.</div>
+                    <div class="search-history search-history-inline hidden">
+                        <div class="search-history-title">Recent author searches</div>
+                        <div class="search-history-list"></div>
+                    </div>
                     <div class="search-results"></div>
                 </div>
             </div>
@@ -124,6 +131,10 @@
                     </form>
 
                     <div class="status search-status">Ready.</div>
+                    <div class="search-history search-history-inline hidden">
+                        <div class="search-history-title">Recent ISBN searches</div>
+                        <div class="search-history-list"></div>
+                    </div>
                     <div class="search-results"></div>
                 </div>
             </div>
@@ -221,7 +232,6 @@
                             <input id="calibre-search-input" type="text" placeholder="Search Calibre (title, author, ISBN, tag)" />
                             <button id="calibre-search-clear" class="btn btn-ghost" title="Clear search">×</button>
                         </div>
-                        <button id="btn-calibre-sync" class="btn btn-primary">Sync Calibre</button>
                     </div>
                 </div>
 
@@ -256,6 +266,25 @@
                 <div id="suggested-results" class="results-grid"></div>
             </div>
 
+            <!-- Activity Log -->
+            <div id="section-logs" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Activity log</h1>
+                        <p>Watch background syncs and integrations as they run.</p>
+                    </div>
+                    <div class="section-actions">
+                        <div class="log-toolbar">
+                            <button id="btn-refresh-logs" class="btn btn-primary">Refresh</button>
+                            <button id="btn-clear-logs" class="btn btn-ghost">Clear</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="logs-status" class="status">Loading activity…</div>
+                <div id="logs-list" class="log-list"></div>
+            </div>
+
             <!-- Settings -->
             <div id="section-settings" class="hidden">
                 <div class="content-header">
@@ -277,6 +306,20 @@
                         </label>
                     </div>
                     <div id="settings-hardcover-status" class="status">Not syncing with Hardcover.</div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-row settings-row--stacked">
+                        <div>
+                            <h2>Hardcover Owned list</h2>
+                            <p>Set the Hardcover list id to use when exporting your owned bookshelf.</p>
+                        </div>
+                        <div class="settings-input-group">
+                            <input type="text" id="input-hardcover-list-id" class="settings-input" placeholder="Hardcover list id (e.g., 247816)" />
+                            <button id="btn-save-hardcover-list" class="btn btn-primary">Save</button>
+                        </div>
+                    </div>
+                    <div id="status-hardcover-list" class="status">No Hardcover list configured.</div>
                 </div>
 
                 <div class="settings-card" id="settings-calibre-card">
@@ -317,5 +360,6 @@
     <script src="js/calibre.js"></script>
     <script src="js/hardcover.js"></script>
     <script src="js/suggested.js"></script>
+    <script src="js/logs.js"></script>
 </body>
 </html>

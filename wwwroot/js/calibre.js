@@ -4,7 +4,6 @@
 
     const statusEl = document.getElementById('calibre-status');
     const resultsEl = document.getElementById('calibre-results');
-    const syncBtn = document.getElementById('btn-calibre-sync');
     const searchInput = document.getElementById('calibre-search-input');
     const searchClear = document.getElementById('calibre-search-clear');
     const sortSelect = document.getElementById('calibre-sort');
@@ -12,7 +11,6 @@
 
     let loaded = false;
     let loading = false;
-    let syncing = false;
     let searchQuery = '';
     let lastSyncText = '';
     let allBooks = [];
@@ -31,6 +29,8 @@
             const copy = Object.assign({}, raw);
             copy.source = 'calibre';
             copy.calibre_id = raw.id;
+            copy.hardcover_id = raw.hardcoverId || raw.hardcover_id || null;
+            copy.hardcoverId = copy.hardcover_id;
             copy.id = `calibre-${raw.id}`;
             copy.slug = copy.id;
 
@@ -222,8 +222,8 @@
                 lastSyncText = syncInfo;
                 loaded = true;
                 statusEl.textContent = data?.lastSync
-                    ? 'No books in Calibre mirror. Click “Sync Calibre” to refresh.'
-                    : 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
+                    ? 'No books in Calibre mirror yet. Waiting for the next automatic sync.'
+                    : 'Calibre not synced yet. Automatic sync will populate your library once the metadata path is set.';
                 if (typeof app.setLibraryFromCalibre === 'function') {
                     app.setLibraryFromCalibre(books, syncInfo);
                 }
@@ -248,28 +248,6 @@
         }
     }
 
-    async function syncCalibreLibrary() {
-        if (syncing) return;
-        syncing = true;
-        if (syncBtn) syncBtn.disabled = true;
-        statusEl.textContent = 'Syncing Calibre library…';
-        try {
-            const res = await fetch('/calibre/sync', { method: 'POST' });
-            if (!res.ok) {
-                const detail = await res.text().catch(() => '');
-                statusEl.textContent = detail || 'Unable to sync Calibre library.';
-                return;
-            }
-            await loadCalibreBooks(true);
-        } catch (err) {
-            console.error('Calibre sync failed', err);
-            statusEl.textContent = 'Error syncing Calibre library.';
-        } finally {
-            syncing = false;
-            if (syncBtn) syncBtn.disabled = false;
-        }
-    }
-
     window.bookwormCalibre = {
         ensureLoaded() {
             if (!loaded) {
@@ -279,13 +257,8 @@
         reload() {
             loaded = false;
             loadCalibreBooks();
-        },
-        sync: syncCalibreLibrary
+        }
     };
-
-    if (syncBtn) {
-        syncBtn.addEventListener('click', syncCalibreLibrary);
-    }
 
     if (searchInput) {
         searchInput.addEventListener('input', (event) => {
@@ -309,9 +282,4 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        if (syncBtn) {
-            syncBtn.disabled = false;
-        }
-    });
 })();

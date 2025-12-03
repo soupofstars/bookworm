@@ -12,6 +12,7 @@ public class HardcoverWantSyncSchedule : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly HardcoverWantCacheRepository _cacheRepo;
+    private readonly ActivityLogService _activityLog;
     private readonly ILogger<HardcoverWantSyncSchedule> _logger;
     private readonly TimeSpan _interval;
     private readonly bool _enabled;
@@ -104,11 +105,13 @@ public class HardcoverWantSyncSchedule : BackgroundService
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         HardcoverWantCacheRepository cacheRepo,
+        ActivityLogService activityLog,
         ILogger<HardcoverWantSyncSchedule> logger)
     {
         _httpClientFactory = httpClientFactory;
         _config = config;
         _cacheRepo = cacheRepo;
+        _activityLog = activityLog;
         _logger = logger;
 
         var minutes = config.GetValue<int?>("Hardcover:SyncIntervalMinutes");
@@ -121,12 +124,14 @@ public class HardcoverWantSyncSchedule : BackgroundService
         if (!_enabled)
         {
             _logger.LogInformation("Hardcover want-to-read sync disabled (Hardcover:SyncIntervalMinutes <= 0).");
+            await _activityLog.InfoAsync("Hardcover want sync", "Hardcover want-to-read sync is disabled via configuration.");
             return;
         }
 
         if (!IsHardcoverConfigured())
         {
             _logger.LogInformation("Hardcover want-to-read sync disabled: Hardcover API key not configured.");
+            await _activityLog.InfoAsync("Hardcover want sync", "Skipped Hardcover want-to-read sync: API key not configured.");
             return;
         }
 
@@ -155,8 +160,9 @@ public class HardcoverWantSyncSchedule : BackgroundService
             {
                 _logger.LogInformation("Hardcover want-to-read sync: no books returned.");
             }
-            await _cacheRepo.UpsertAsync(books, cancellationToken);
-            _logger.LogInformation("Hardcover want-to-read sync completed. Cached {Count} book(s).", books.Count);
+            var replace = await _cacheRepo.ReplaceAllAsync(books, cancellationToken);
+            _logger.LogInformation("Hardcover want-to-read sync completed. Cached {Cached} book(s). Removed {Removed}.", replace.Cached, replace.Removed);
+            await _activityLog.SuccessAsync("Hardcover want sync", "Hardcover want-to-read sync completed.", new { cached = replace.Cached, removed = replace.Removed });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -165,6 +171,7 @@ public class HardcoverWantSyncSchedule : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Hardcover want-to-read sync failed.");
+            await _activityLog.ErrorAsync("Hardcover want sync", "Hardcover want-to-read sync failed.", new { error = ex.Message });
         }
     }
 

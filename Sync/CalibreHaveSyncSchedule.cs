@@ -12,6 +12,7 @@ public class CalibreHaveSyncSchedule : BackgroundService
 {
     private readonly CalibreSyncService _syncService;
     private readonly UserSettingsStore _settings;
+    private readonly ActivityLogService _activityLog;
     private readonly ILogger<CalibreHaveSyncSchedule> _logger;
     private readonly TimeSpan _interval;
     private readonly bool _enabled;
@@ -20,10 +21,12 @@ public class CalibreHaveSyncSchedule : BackgroundService
         CalibreSyncService syncService,
         UserSettingsStore settings,
         IConfiguration configuration,
+        ActivityLogService activityLog,
         ILogger<CalibreHaveSyncSchedule> logger)
     {
         _syncService = syncService;
         _settings = settings;
+        _activityLog = activityLog;
         _logger = logger;
 
         var minutes = configuration.GetValue<int?>("Calibre:SyncIntervalMinutes");
@@ -36,6 +39,7 @@ public class CalibreHaveSyncSchedule : BackgroundService
         if (!_enabled)
         {
             _logger.LogInformation("Periodic Calibre sync disabled (Calibre:SyncIntervalMinutes <= 0).");
+            await _activityLog.InfoAsync("Calibre sync", "Periodic Calibre sync disabled via configuration.");
             return;
         }
 
@@ -60,6 +64,7 @@ public class CalibreHaveSyncSchedule : BackgroundService
         if (string.IsNullOrWhiteSpace(_settings.CalibreDatabasePath))
         {
             _logger.LogDebug("Skipping Calibre sync: Calibre database path is not configured.");
+            await _activityLog.InfoAsync("Calibre sync", "Skipped Calibre sync: metadata.db path not configured.");
             return;
         }
 
@@ -69,6 +74,7 @@ public class CalibreHaveSyncSchedule : BackgroundService
             if (!result.Success)
             {
                 _logger.LogWarning("Periodic Calibre sync failed: {Error}", result.Error ?? "unknown error");
+                await _activityLog.WarnAsync("Calibre sync", "Periodic Calibre sync failed.", new { error = result.Error });
                 return;
             }
 
@@ -77,6 +83,12 @@ public class CalibreHaveSyncSchedule : BackgroundService
                 result.Count,
                 result.NewBookIds?.Count ?? 0,
                 result.RemovedBookIds?.Count ?? 0);
+            await _activityLog.SuccessAsync("Calibre sync", "Periodic Calibre sync completed.", new
+            {
+                total = result.Count,
+                newCount = result.NewBookIds?.Count ?? 0,
+                removedCount = result.RemovedBookIds?.Count ?? 0
+            });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -85,6 +97,7 @@ public class CalibreHaveSyncSchedule : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Periodic Calibre sync threw an exception.");
+            await _activityLog.ErrorAsync("Calibre sync", "Periodic Calibre sync threw an exception.", new { error = ex.Message });
         }
     }
 }

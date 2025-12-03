@@ -6,6 +6,8 @@
         librarySyncText: '',
         librarySort: 'title-asc',
         librarySearchQuery: '',
+        lastCalibreSnapshot: null,
+        lastCalibreBookCount: null,
         wanted: [],
         wantedLoading: false,
         wantedLoaded: false,
@@ -15,6 +17,7 @@
     };
     const HARDCOVER_SYNC_KEY = 'bookworm:hardcover-sync';
     const HARDCOVER_SYNC_INTERVAL_MS = 5 * 60 * 1000; // periodic Hardcover sync when enabled
+    const CALIBRE_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // periodic bookshelf reload to reflect background sync
     const hardcoverIdCache = new Map();
     const wantedSearchCache = new WeakMap();
     const librarySearchCache = new WeakMap();
@@ -29,6 +32,7 @@
         suggested: document.getElementById('section-suggested'),
         'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
         calibre: document.getElementById('section-calibre'),
+        logs: document.getElementById('section-logs'),
         settings: document.getElementById('section-settings')
     };
 
@@ -52,6 +56,9 @@
         wantedSortSelect: document.getElementById('wanted-sort'),
         hardcoverToggle: document.getElementById('toggle-hardcover-sync'),
         hardcoverToggleStatus: document.getElementById('settings-hardcover-status'),
+        hardcoverListInput: document.getElementById('input-hardcover-list-id'),
+        hardcoverListSave: document.getElementById('btn-save-hardcover-list'),
+        hardcoverListStatus: document.getElementById('status-hardcover-list'),
         calibrePathInput: document.getElementById('input-calibre-path'),
         calibrePathSave: document.getElementById('btn-save-calibre-path'),
         calibrePathStatus: document.getElementById('status-calibre-path'),
@@ -59,6 +66,8 @@
     };
 
     let hardcoverSyncTimer = null;
+    let calibreRefreshTimer = null;
+    let hardcoverListId = null;
 
     function isHardcoverBook(book) {
         return Boolean(book && book.source === 'hardcover');
@@ -74,6 +83,8 @@
         const copy = Object.assign({}, raw);
         copy.source = 'calibre';
         copy.calibre_id = raw.id;
+        copy.hardcover_id = raw.hardcoverId || raw.hardcover_id || null;
+        copy.hardcoverId = copy.hardcover_id;
         const baseId = raw.id != null ? `calibre-${raw.id}` : (raw.slug || raw.title || Math.random().toString(36).slice(2, 8));
         copy.id = baseId;
         copy.slug = baseId;
@@ -127,6 +138,50 @@
             refs.hardcoverToggleStatus.textContent = state.hardcoverSyncEnabled
                 ? 'Syncing with Hardcover want-to-read list.'
                 : 'Not syncing with Hardcover.';
+        }
+    }
+
+    async function refreshHardcoverListStatus() {
+        if (!refs.hardcoverListStatus) return;
+        try {
+            const res = await fetch('/settings/hardcover/list');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            hardcoverListId = data?.listId || null;
+            if (refs.hardcoverListInput) {
+                refs.hardcoverListInput.value = hardcoverListId || '';
+            }
+            refs.hardcoverListStatus.textContent = hardcoverListId
+                ? `Hardcover list id set to ${hardcoverListId}.`
+                : 'No Hardcover list configured.';
+        } catch (err) {
+            console.error('Failed to load Hardcover list id', err);
+            refs.hardcoverListStatus.textContent = 'Unable to load Hardcover list id.';
+        }
+    }
+
+    async function saveHardcoverListSetting(event) {
+        if (event) event.preventDefault();
+        if (!refs.hardcoverListInput || !refs.hardcoverListStatus) return;
+        const value = refs.hardcoverListInput.value || '';
+        try {
+            const res = await fetch('/settings/hardcover/list', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ listId: value.trim() || null })
+            });
+            if (!res.ok) {
+                const detail = await res.text().catch(() => '');
+                throw new Error(detail || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            hardcoverListId = data?.listId || null;
+            refs.hardcoverListStatus.textContent = hardcoverListId
+                ? `Hardcover list id set to ${hardcoverListId}.`
+                : 'No Hardcover list configured.';
+        } catch (err) {
+            console.error('Failed to save Hardcover list id', err);
+            refs.hardcoverListStatus.textContent = 'Unable to save Hardcover list id.';
         }
     }
 
@@ -293,6 +348,14 @@
         return `<span class="book-source">${escapeHtml(label)}</span>`;
     }
 
+    function renderHardcoverStatus(book) {
+        const hardcoverId = book?.hardcoverId ?? book?.hardcover_id;
+        if (hardcoverId) {
+            return `<span class="hc-status hc-status-neutral">Synced to Hardcover</span>`;
+        }
+        return `<span class="hc-status hc-status-neutral">Not on Hardcover</span>`;
+    }
+
     function createBookCard(book, options) {
         const opts = Object.assign(
             {
@@ -305,7 +368,8 @@
                 matchScoreLabel: null,
                 onRemoveFromWanted: null,
                 sourceInRightPill: false,
-                showIsbnInline: false
+                showIsbnInline: false,
+                showHardcoverStatus: false
             },
             options || {});
         const key = bookKey(book);
@@ -449,6 +513,12 @@
             }
             if (isCalibre) {
                 const publisher = book.publisher ? escapeHtml(book.publisher) : 'Unknown';
+                if (opts.showHardcoverStatus) {
+                    return [
+                        { label: 'Publisher:', value: publisher },
+                        { label: '', value: renderHardcoverStatus(book) }
+                    ];
+                }
                 const series = book.series ? escapeHtml(book.series) : 'Standalone';
                 return [
                     { label: 'Publisher:', value: publisher },
@@ -842,8 +912,12 @@ div.innerHTML = `
         return uuid.test(str) || digits.test(str);
     }
 
-    async function updateHardcoverWantState(book, shouldWant) {
-        if (!state.hardcoverSyncEnabled || !isHardcoverBook(book)) return;
+    const HARDCOVER_QUEUE_INTERVAL_MS = 30 * 1000; // 2 per minute
+    const hardcoverActionQueue = [];
+    let hardcoverQueueTimer = null;
+
+    async function sendHardcoverWantState(book, shouldWant) {
+        if (!state.hardcoverSyncEnabled) return;
         const targetStatusId = shouldWant ? 1 : 6;
         const actionLabel = shouldWant ? 'want-to-read' : 'remove';
         let bookId = book.id ?? book.book_id ?? book.bookId;
@@ -860,34 +934,61 @@ div.innerHTML = `
         }
         const payload = { book_id: bookId, status_id: targetStatusId, wantToRead: shouldWant };
         console.debug('[Hardcover] status payload', payload);
-        try {
-            const url = '/hardcover/want-to-read/status?debug=1';
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const resText = await res.text();
-            console.debug('[Hardcover] status response', { status: res.status, body: resText, payload });
-            if (!res.ok) {
-                const detail = parseHardcoverErrorText(resText);
-                const message = detail || `Failed to ${actionLabel} on Hardcover (HTTP ${res.status}).`;
-                console.warn('Hardcover status update failed', { status: res.status, detail, payload });
-                throw new Error(message);
-            }
-            console.debug('[Hardcover] status update ok', { payload });
-            if (refs.hardcoverToggleStatus) {
-                refs.hardcoverToggleStatus.textContent = shouldWant
-                    ? 'Synced with Hardcover.'
-                    : 'Removed from Hardcover want-to-read.';
-            }
-        } catch (err) {
-            console.error('Hardcover sync failed', err);
-            if (refs.hardcoverToggleStatus) {
-                const msg = err?.message || 'Error syncing with Hardcover.';
-                refs.hardcoverToggleStatus.textContent = msg;
-            }
+        const url = '/hardcover/want-to-read/status?debug=1';
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const resText = await res.text();
+        console.debug('[Hardcover] status response', { status: res.status, body: resText, payload });
+        if (!res.ok) {
+            const detail = parseHardcoverErrorText(resText);
+            const message = detail || `Failed to ${actionLabel} on Hardcover (HTTP ${res.status}).`;
+            console.warn('Hardcover status update failed', { status: res.status, detail, payload });
+            throw new Error(message);
         }
+        if (refs.hardcoverToggleStatus) {
+            refs.hardcoverToggleStatus.textContent = shouldWant
+                ? 'Synced with Hardcover.'
+                : 'Removed from Hardcover want-to-read.';
+        }
+    }
+
+    function processHardcoverQueue() {
+        if (hardcoverActionQueue.length === 0) {
+            hardcoverQueueTimer = null;
+            return;
+        }
+        const { book, shouldWant, resolve, reject } = hardcoverActionQueue.shift();
+        sendHardcoverWantState(book, shouldWant)
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+                hardcoverQueueTimer = setTimeout(processHardcoverQueue, HARDCOVER_QUEUE_INTERVAL_MS);
+            });
+    }
+
+    function enqueueHardcoverWantState(book, shouldWant) {
+        if (!state.hardcoverSyncEnabled) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve, reject) => {
+            hardcoverActionQueue.push({ book, shouldWant, resolve, reject });
+            if (!hardcoverQueueTimer) {
+                processHardcoverQueue();
+            }
+        });
+    }
+
+    function updateHardcoverWantState(book, shouldWant) {
+        return enqueueHardcoverWantState(book, shouldWant);
+    }
+
+    async function syncHardcoverAfterWantedAdd(book) {
+        if (!state.hardcoverSyncEnabled) return;
+        await updateHardcoverWantState(book, true);
+        mirrorHardcoverWanted({ force: true, retries: 2 });
     }
 
     async function mergeWantedBooks(books, options) {
@@ -1024,6 +1125,47 @@ div.innerHTML = `
         }
     }
 
+    function startCalibreRefreshTimer() {
+        stopCalibreRefreshTimer();
+        const tick = () => {
+            pollCalibreSyncState();
+        };
+        calibreRefreshTimer = setInterval(tick, CALIBRE_REFRESH_INTERVAL_MS);
+    }
+
+    function stopCalibreRefreshTimer() {
+        if (calibreRefreshTimer) {
+            clearInterval(calibreRefreshTimer);
+            calibreRefreshTimer = null;
+        }
+    }
+
+    async function pollCalibreSyncState() {
+        try {
+            const res = await fetch('/calibre/sync/state', { cache: 'no-store' });
+            if (!res.ok) return;
+            const data = await res.json();
+            const snapshot = data?.lastSync || data?.lastSnapshot || null;
+            const normalizedSnapshot = snapshot ? new Date(snapshot).toISOString() : null;
+            const count = typeof data?.bookCount === 'number' ? data.bookCount : null;
+
+            const snapshotChanged = normalizedSnapshot !== (state.lastCalibreSnapshot || null);
+            const countChanged = count != null && state.lastCalibreBookCount != null && count !== state.lastCalibreBookCount;
+
+            if (snapshotChanged || countChanged) {
+                state.lastCalibreSnapshot = normalizedSnapshot;
+                state.lastCalibreBookCount = count != null ? count : state.lastCalibreBookCount;
+                reloadLibraryFromCalibre(true);
+                if (window.bookwormCalibre && typeof window.bookwormCalibre.reload === 'function') {
+                    window.bookwormCalibre.reload();
+                }
+            }
+        } catch (err) {
+            // soft-fail; will try again on next tick
+            console.debug('Calibre sync state poll failed', err);
+        }
+    }
+
     async function loadWantedFromServer() {
         state.wantedLoading = true;
         renderWanted();
@@ -1060,6 +1202,7 @@ div.innerHTML = `
                     if (typeof opts.onSaved === 'function') {
                         opts.onSaved();
                     }
+                    syncHardcoverAfterWantedAdd(book);
                 })
                 .catch(err => {
                     console.error(err);
@@ -1070,9 +1213,7 @@ div.innerHTML = `
                         renderWanted();
                     }
                 });
-            if (state.hardcoverSyncEnabled && isHardcoverBook(book)) {
-                updateHardcoverWantState(book, true);
-            }
+            syncHardcoverAfterWantedAdd(book);
         } else {
             refs.wantedStatus.textContent = 'Already in Wanted.';
             if (typeof opts.onAlready === 'function') {
@@ -1167,12 +1308,18 @@ div.innerHTML = `
                 const syncText = data?.lastSync
                     ? `Last sync: ${new Date(data.lastSync).toLocaleString()}`
                     : 'Calibre not synced yet.';
+                state.lastCalibreSnapshot = data?.lastSync
+                    ? new Date(data.lastSync).toISOString()
+                    : null;
+                state.lastCalibreBookCount = typeof data?.count === 'number'
+                    ? data.count
+                    : books.length;
 
                 const count = setLibraryFromCalibre(books, syncText);
                 if (count === 0 && refs.libraryStatus) {
                     refs.libraryStatus.textContent = data?.lastSync
-                        ? 'No books in Calibre mirror. Click “Sync Calibre” to refresh.'
-                        : 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
+                        ? 'No books in Calibre mirror yet. Waiting for the next automatic sync.'
+                        : 'Calibre not synced yet. Automatic sync will populate your library once the metadata path is set.';
                 }
 
                 return state.library;
@@ -1329,10 +1476,10 @@ div.innerHTML = `
                 const syncText = state.librarySyncText || '';
                 const unsynced = syncText.toLowerCase().includes('not synced');
                 if (unsynced) {
-                    libraryStatus.textContent = 'Calibre not synced yet. Click “Sync Calibre” to import your library.';
+                    libraryStatus.textContent = 'Calibre not synced yet. Automatic sync will populate your library once the metadata path is set.';
                 } else {
                     const suffix = syncText ? ` ${syncText}` : '';
-                    libraryStatus.textContent = `No books found in Calibre mirror.${suffix} Click “Sync Calibre” to refresh.`;
+                    libraryStatus.textContent = `No books found in Calibre mirror.${suffix} Waiting for the next automatic sync.`;
                 }
             } else {
                 libraryStatus.textContent = 'No books on your bookshelf yet.';
@@ -1351,7 +1498,7 @@ div.innerHTML = `
             const suffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
             libraryStatus.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}".${suffix ? ` ${suffix}` : ''}`
-                : `No books found in Calibre mirror.${suffix} Click “Sync Calibre” to refresh.`;
+                : `No books found in Calibre mirror.${suffix} Waiting for the next automatic sync.`;
             return;
         }
 
@@ -1361,7 +1508,8 @@ div.innerHTML = `
             libraryResults.appendChild(createBookCard(book, {
                 showWanted: false,
                 showAddToLibrary: false,
-                enableViewLink: false
+                enableViewLink: false,
+                showHardcoverStatus: true
             }));
         });
     }
@@ -1571,6 +1719,9 @@ div.innerHTML = `
         } else if (sectionName === 'calibre') {
             refs.topbarTitle.textContent = 'Calibre';
             window.bookwormCalibre && window.bookwormCalibre.ensureLoaded();
+        } else if (sectionName === 'logs') {
+            refs.topbarTitle.textContent = 'Activity log';
+            window.bookwormLogs && window.bookwormLogs.ensureLoaded();
         } else if (sectionName === 'settings') {
             refs.topbarTitle.textContent = 'Settings';
         }
@@ -1630,6 +1781,16 @@ div.innerHTML = `
             setHardcoverSyncEnabled(event.target.checked);
         });
     }
+    if (refs.hardcoverListSave) {
+        refs.hardcoverListSave.addEventListener('click', saveHardcoverListSetting);
+    }
+    if (refs.hardcoverListInput) {
+        refs.hardcoverListInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                saveHardcoverListSetting(event);
+            }
+        });
+    }
     if (refs.calibrePathSave) {
         refs.calibrePathSave.addEventListener('click', saveCalibrePathSetting);
     }
@@ -1641,6 +1802,7 @@ div.innerHTML = `
         });
     }
     refreshCalibrePathStatus();
+    refreshHardcoverListStatus();
 
     showSection('library');
     loadWantedFromServer();
@@ -1648,6 +1810,7 @@ div.innerHTML = `
         mirrorHardcoverWanted({ force: false, retries: 8 });
         startHardcoverSyncTimer(false);
     }
+    startCalibreRefreshTimer();
 
     window.bookwormApp = {
         state,

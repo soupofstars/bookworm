@@ -72,6 +72,8 @@
         const input = panel.querySelector('input');
         const statusEl = panel.querySelector('.search-status');
         const resultsEl = panel.querySelector('.search-results');
+        const historyEl = panel.querySelector('.search-history-list');
+        const historyContainer = panel.querySelector('.search-history');
         if (!form || !input || !statusEl || !resultsEl) return;
 
         const state = states[mode] = {
@@ -80,6 +82,8 @@
             input,
             statusEl,
             resultsEl,
+            historyEl,
+            historyContainer,
             query: '',
             results: [],
             related: [],
@@ -155,12 +159,120 @@
 
         state.runSearch = runSearch;
 
+        function positionHistory() {
+            if (!historyContainer || historyContainer.classList.contains('hidden')) return;
+            if (!input) return;
+            const rect = input.getBoundingClientRect();
+            const margin = 16;
+            const viewportWidth = window.innerWidth;
+            const desiredWidth = Math.min(viewportWidth - margin * 2, Math.max(rect.width + 80, 420));
+            const maxLeft = window.scrollX + viewportWidth - desiredWidth - margin;
+            const left = Math.min(Math.max(window.scrollX + rect.left - 20, margin), maxLeft);
+            const top = rect.bottom + 6 + window.scrollY;
+            historyContainer.style.position = 'fixed';
+            historyContainer.style.left = `${left}px`;
+            historyContainer.style.width = `${desiredWidth}px`;
+            historyContainer.style.right = 'auto';
+            historyContainer.style.top = `${top}px`;
+        }
+
+        async function deleteHistoryEntry(query) {
+            try {
+                const res = await fetch(`/search/history/isbn?query=${encodeURIComponent(query)}`, { method: 'DELETE' });
+                if (!res.ok && res.status !== 404) {
+                    console.warn('Failed to delete ISBN history', res.status);
+                }
+            } catch (err) {
+                console.warn('Delete ISBN history failed', err);
+            } finally {
+                await renderHistory();
+            }
+        }
+
+        async function renderHistory() {
+            if (!historyEl || !historyContainer) return;
+            historyEl.innerHTML = '';
+            historyContainer.classList.remove('hidden');
+            const showEmpty = (message) => {
+                const row = document.createElement('div');
+                row.className = 'search-history-entry search-history-empty';
+                row.textContent = message;
+                historyEl.appendChild(row);
+            };
+            try {
+                const res = await fetch('/search/history/isbn?take=8');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const entries = Array.isArray(data?.items) ? data.items : [];
+                if (!entries.length) {
+                    showEmpty('No recent ISBN searches.');
+                    return;
+                }
+                entries.forEach(entry => {
+                    const row = document.createElement('div');
+                    row.className = 'search-history-entry';
+
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.textContent = entry.query;
+                    btn.addEventListener('click', () => {
+                        input.value = entry.query;
+                        runSearch(entry.query);
+                        historyContainer.classList.add('hidden');
+                    });
+
+                    const count = document.createElement('div');
+                    count.className = 'search-history-count';
+                    count.textContent = `${entry.count} result(s)`;
+
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'search-history-remove';
+                    remove.textContent = '×';
+                    remove.title = 'Remove from history';
+                    remove.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        deleteHistoryEntry(entry.query);
+                    });
+
+                    const left = document.createElement('div');
+                    left.className = 'search-history-left';
+                    left.appendChild(btn);
+                    left.appendChild(count);
+
+                    row.appendChild(left);
+                    row.appendChild(remove);
+                    historyEl.appendChild(row);
+                });
+                positionHistory();
+            } catch (err) {
+                console.warn('Failed to load ISBN search history', err);
+                showEmpty('Unable to load search history.');
+            }
+        }
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const query = input.value.trim();
             if (!query) return;
             await runSearch(query);
+            if (historyContainer) historyContainer.classList.add('hidden');
         });
+
+        input.addEventListener('focus', () => {
+            renderHistory();
+        });
+        input.addEventListener('input', () => {
+            renderHistory();
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (historyContainer) historyContainer.classList.add('hidden');
+            }, 120);
+        });
+
+        window.addEventListener('resize', positionHistory);
+        window.addEventListener('scroll', positionHistory, { passive: true });
 
         applyStatus();
     }
