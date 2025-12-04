@@ -22,18 +22,25 @@
             </div>
         </div>
 
-            <div class="nav-section">
-                <div class="nav-section-title">Library</div>
-                <div class="nav-link active" data-section="library">
-                    <span class="nav-dot"></span> Bookshelf
-                </div>
-                <div class="nav-link" data-section="wanted">
-                    <span class="nav-dot"></span> Wanted
-                </div>
-                <div class="nav-link" data-section="suggested">
-                    <span class="nav-dot"></span> Suggested
-                </div>
+        <div class="nav-section">
+            <div class="nav-section-title">Library</div>
+            <div class="nav-link active" data-section="library">
+                <span class="nav-dot"></span> Bookshelf
             </div>
+            <div class="nav-link" data-section="wanted">
+                <span class="nav-dot"></span> Wanted
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-section-title">Book Hunter</div>
+            <div class="nav-link" data-section="suggested">
+                <span class="nav-dot"></span> Suggested
+            </div>
+            <div class="nav-link" data-section="suggested-ignored">
+                <span class="nav-dot"></span> Ignored
+            </div>
+        </div>
 
         <div class="nav-section">
             <div class="nav-section-title">Calibre</div>
@@ -266,6 +273,19 @@
                 <div id="suggested-results" class="results-grid"></div>
             </div>
 
+            <!-- Suggested: Ignored -->
+            <div id="section-suggested-ignored" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Ignored</h1>
+                        <p>Suggestions you marked as not wanted.</p>
+                    </div>
+                </div>
+
+                <div id="suggested-ignored-status" class="status">No ignored suggestions yet.</div>
+                <div id="suggested-ignored-results" class="results-grid"></div>
+            </div>
+
             <!-- Activity Log -->
             <div id="section-logs" class="hidden">
                 <div class="content-header">
@@ -360,6 +380,7 @@
     <script src="js/calibre.js"></script>
     <script src="js/hardcover.js"></script>
     <script src="js/suggested.js"></script>
+    <script src="js/suggested-ignored.js"></script>
     <script src="js/logs.js"></script>
 </body>
 </html>

@@ -55,6 +55,7 @@ builder.Services.AddSingleton(new HardcoverBookshelfMapRepository(storageConnect
 builder.Services.AddSingleton<HardcoverBookshelfResolver>();
 builder.Services.AddHostedService<HardcoverBookshelfSyncSchedule>();
 builder.Services.AddSingleton<CalibreSyncStateService>();
+builder.Services.AddHostedService<SuggestedDedupSchedule>();
 
 // HttpClient for Hardcover
 builder.Services.AddHttpClient("hardcover", (sp, client) =>
@@ -1564,6 +1565,12 @@ app.MapGet("/suggested/ranked", async (SuggestedRepository repo, SuggestedRankin
     });
 });
 
+app.MapGet("/suggested/ignored", async (SuggestedRepository repo, CancellationToken cancellationToken) =>
+{
+    var items = await repo.GetByHiddenAsync(2, cancellationToken);
+    return Results.Ok(new { count = items.Count, items });
+});
+
 app.MapPost("/suggested/hide", async (SuggestedHideRequest request, SuggestedRepository repo, CancellationToken cancellationToken) =>
 {
     var ids = request?.Ids?.Where(id => id > 0).Distinct().ToArray() ?? Array.Empty<int>();
@@ -1572,8 +1579,14 @@ app.MapPost("/suggested/hide", async (SuggestedHideRequest request, SuggestedRep
         return Results.BadRequest(new { error = "No valid ids provided." });
     }
 
-    await repo.HideByIdsAsync(ids, cancellationToken);
-    return Results.Ok(new { hidden = ids.Length });
+    var hiddenValue = request?.Hidden ?? 1;
+    if (hiddenValue <= 0)
+    {
+        hiddenValue = 1;
+    }
+
+    await repo.HideByIdsAsync(ids, hiddenValue, cancellationToken);
+    return Results.Ok(new { hidden = ids.Length, hiddenValue });
 });
 
 app.MapGet("/hardcover/list-cache/status", async (HardcoverListCacheRepository repo, CancellationToken cancellationToken) =>

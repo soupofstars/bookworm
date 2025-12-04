@@ -389,7 +389,14 @@
             useWantedLayout: true,
             matchScore: rec.matchScore,
             matchScoreLabel: null,
-            onAddToWanted: () => handleSuggestedAddToWanted(rec)
+            onAddToWanted: () => handleSuggestedAddToWanted(rec),
+            suggestedHide: () => {
+                const suggestedId = rec.suggestedId || rec.id || rec.Id;
+                if (suggestedId) {
+                    removeSuggestedLocally(suggestedId);
+                    void hideSuggestedRemote(suggestedId, 2);
+                }
+            }
         });
 
         const reasons = Array.isArray(rec.reasons)
@@ -425,13 +432,13 @@
         }
     }
 
-    async function hideSuggestedRemote(suggestedId) {
+    async function hideSuggestedRemote(suggestedId, hiddenValue = 1) {
         if (!suggestedId) return;
         try {
             await fetch('/suggested/hide', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: [suggestedId] })
+                body: JSON.stringify({ ids: [suggestedId], hidden: hiddenValue })
             });
         } catch (err) {
             console.warn('Failed to hide suggested entry', err);

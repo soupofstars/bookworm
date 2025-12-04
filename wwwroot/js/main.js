@@ -30,6 +30,7 @@
         library: document.getElementById('section-library'),
         wanted: document.getElementById('section-wanted'),
         suggested: document.getElementById('section-suggested'),
+        'suggested-ignored': document.getElementById('section-suggested-ignored'),
         'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
         calibre: document.getElementById('section-calibre'),
         logs: document.getElementById('section-logs'),
@@ -369,7 +370,8 @@
                 onRemoveFromWanted: null,
                 sourceInRightPill: false,
                 showIsbnInline: false,
-                showHardcoverStatus: false
+                showHardcoverStatus: false,
+                suggestedHide: null
             },
             options || {});
         const key = bookKey(book);
@@ -470,6 +472,12 @@
                 return [
                     { label: 'Formats:', value: formatsValue },
                     { label: 'Size:', value: sizeText }
+                ];
+            }
+            if (opts.useWantedLayout && typeof opts.suggestedHide === 'function') {
+                return [
+                    { label: 'Editions:', value: editions },
+                    { label: '', value: `<button class="btn btn-ghost btn-mark-unwanted">Mark as unwanted</button>` }
                 ];
             }
             const pills = [
@@ -649,6 +657,14 @@ div.innerHTML = `
         const addLibBtn = div.querySelector('.btn-addlib-action');
         if (addLibBtn) {
             addLibBtn.addEventListener('click', () => addToLibrary(book));
+        }
+
+        const unwantedBtn = div.querySelector('.btn-mark-unwanted');
+        if (unwantedBtn && typeof opts.suggestedHide === 'function') {
+            unwantedBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                opts.suggestedHide(book);
+            });
         }
 
         div.querySelectorAll('.btn-text-toggle.author-more-btn').forEach(btn => {
@@ -1713,6 +1729,9 @@ div.innerHTML = `
         } else if (sectionName === 'suggested') {
             refs.topbarTitle.textContent = 'Suggested';
             window.bookwormSuggested && window.bookwormSuggested.ensureLoaded();
+        } else if (sectionName === 'suggested-ignored') {
+            refs.topbarTitle.textContent = 'Ignored suggestions';
+            window.bookwormSuggestedIgnored && window.bookwormSuggestedIgnored.ensureLoaded();
         } else if (sectionName === 'hardcover-wanted') {
             refs.topbarTitle.textContent = 'Hardcover.app · Want to read';
             window.bookwormHardcover && window.bookwormHardcover.ensureLoaded();

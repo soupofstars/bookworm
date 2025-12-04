@@ -7,7 +7,7 @@ public record SuggestedEntry(JsonElement Book, IReadOnlyList<string> BaseGenres,
 
 public record SuggestedResponse(int Id, JsonElement Book, IReadOnlyList<string> BaseGenres, IReadOnlyList<HardcoverListReason> Reasons, string? SourceKey);
 
-public record SuggestedHideRequest(int[] Ids);
+public record SuggestedHideRequest(int[] Ids, int Hidden = 1);
 
 public class SuggestedRepository
 {
@@ -257,7 +257,14 @@ public class SuggestedRepository
     }
 
     public async Task<IReadOnlyList<SuggestedResponse>> GetAllAsync(CancellationToken cancellationToken = default)
+        => await GetByHiddenInternalAsync(0, cancellationToken);
+
+    public async Task<IReadOnlyList<SuggestedResponse>> GetByHiddenAsync(int hiddenValue, CancellationToken cancellationToken = default)
+        => await GetByHiddenInternalAsync(hiddenValue, cancellationToken);
+
+    private async Task<IReadOnlyList<SuggestedResponse>> GetByHiddenInternalAsync(int hiddenValue, CancellationToken cancellationToken)
     {
+        var resolvedHidden = hiddenValue < 0 ? 0 : hiddenValue;
         var results = new List<SuggestedResponse>();
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
@@ -265,9 +272,10 @@ public class SuggestedRepository
         cmd.CommandText = $"""
             SELECT id, hardcover_key, book_json, base_genres_json, reasons_json
             FROM {TableName}
-            WHERE hidden = 0
+            WHERE hidden = @hidden
             ORDER BY updated_at DESC, created_at DESC;
             """;
+        cmd.Parameters.AddWithValue("@hidden", resolvedHidden);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -321,18 +329,20 @@ public class SuggestedRepository
         return trimmed.Length == 0 ? null : trimmed;
     }
 
-    public async Task HideByIdsAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default)
+    public async Task HideByIdsAsync(IReadOnlyCollection<int> ids, int hiddenValue = 1, CancellationToken cancellationToken = default)
     {
         if (ids is null || ids.Count == 0) return;
 
+        var resolvedHidden = hiddenValue <= 0 ? 1 : hiddenValue;
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
         await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken);
 
         var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = $"UPDATE {TableName} SET hidden = 1, updated_at = @updated WHERE id IN (" + string.Join(",", ids.Select((_, i) => $"@id{i}")) + ");";
+        cmd.CommandText = $"UPDATE {TableName} SET hidden = @hidden, updated_at = @updated WHERE id IN (" + string.Join(",", ids.Select((_, i) => $"@id{i}")) + ");";
         var now = DateTime.UtcNow.ToString("o");
+        cmd.Parameters.AddWithValue("@hidden", resolvedHidden);
         cmd.Parameters.AddWithValue("@updated", now);
         var idx = 0;
         foreach (var id in ids)
@@ -343,6 +353,61 @@ public class SuggestedRepository
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
+    }
+
+    public async Task<int> HideDuplicateByHardcoverKeyAsync(CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        // Fetch non-hidden entries grouped by hardcover_key
+        var entries = new List<(int Id, string Key, DateTime UpdatedAt)>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"""
+                SELECT id, hardcover_key, updated_at
+                FROM {TableName}
+                WHERE hidden = 0
+                  AND hardcover_key IS NOT NULL
+                  AND TRIM(hardcover_key) <> ''
+                ORDER BY hardcover_key, datetime(updated_at) DESC, id DESC;
+                """;
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var id = reader.GetInt32(0);
+                var key = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                var updatedRaw = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var updatedAt = DateTime.TryParse(updatedRaw, out var parsed) ? parsed : DateTime.MinValue;
+                entries.Add((id, key, updatedAt));
+            }
+        }
+
+        var toHide = new List<int>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (!seen.Add(entry.Key))
+            {
+                toHide.Add(entry.Id);
+            }
+        }
+
+        if (toHide.Count == 0) return 0;
+
+        await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken);
+        var hideCmd = conn.CreateCommand();
+        hideCmd.Transaction = tx;
+        hideCmd.CommandText = $"UPDATE {TableName} SET hidden = 1, updated_at = @updated WHERE id IN (" + string.Join(",", toHide.Select((_, i) => $"@id{i}")) + ");";
+        var now = DateTime.UtcNow.ToString("o");
+        hideCmd.Parameters.AddWithValue("@updated", now);
+        for (var i = 0; i < toHide.Count; i++)
+        {
+            hideCmd.Parameters.AddWithValue($"@id{i}", toHide[i]);
+        }
+        await hideCmd.ExecuteNonQueryAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return toHide.Count;
     }
 
     public async Task DeleteByIdsAsync(IEnumerable<int> ids, CancellationToken cancellationToken = default)
