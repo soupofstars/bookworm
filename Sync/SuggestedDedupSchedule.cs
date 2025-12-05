@@ -23,28 +23,18 @@ public class SuggestedDedupSchedule : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Align to the next 8 or 38 minutes past the hour, then run twice per hour.
-        var now = DateTime.UtcNow;
-        var nextRun = GetNextRunTime(now);
-        var initialDelay = nextRun - now;
         try
         {
-            await Task.Delay(initialDelay, stoppingToken);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
-        }
+            // Run once immediately, then align to the next scheduled slot (8 / 38 past the hour).
+            await RunOnceAsync(stoppingToken);
 
-        try
-        {
             while (true)
             {
-                await RunOnceAsync(stoppingToken);
                 var next = GetNextRunTime(DateTime.UtcNow);
                 var delay = next - DateTime.UtcNow;
                 if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
                 await Task.Delay(delay, stoppingToken);
+                await RunOnceAsync(stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -78,12 +68,12 @@ public class SuggestedDedupSchedule : BackgroundService
             if (hidden > 0)
             {
                 _logger.LogInformation("Suggested dedup: hid {Hidden} duplicate suggestion(s).", hidden);
-                await _activityLog.InfoAsync("Suggested", "Hidden duplicate suggestions.", new { hidden });
+                await _activityLog.InfoAsync("Suggested", "Hidden duplicate suggestions (by hardcover id / ISBN / author+title).", new { hidden });
             }
             else
             {
                 _logger.LogInformation("Suggested dedup: scan completed; no duplicates to hide.");
-                await _activityLog.InfoAsync("Suggested", "Checked for duplicate suggestions; none found.");
+                await _activityLog.InfoAsync("Suggested", "Checked for duplicate suggestions; none found.", new { criteria = "hardcover id / ISBN / author+title" });
             }
         }
         catch (Exception ex)

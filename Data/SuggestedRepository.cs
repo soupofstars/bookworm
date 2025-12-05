@@ -329,6 +329,107 @@ public class SuggestedRepository
         return trimmed.Length == 0 ? null : trimmed;
     }
 
+    private static string? NormalizeIsbn(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var cleaned = new string(raw.Where(ch => char.IsDigit(ch) || ch == 'X' || ch == 'x').ToArray()).ToUpperInvariant();
+        return cleaned.Length >= 10 ? cleaned : null;
+    }
+
+    private static string? ExtractFirstString(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var child)) return null;
+        if (child.ValueKind == JsonValueKind.String)
+        {
+            return child.GetString();
+        }
+
+        if (child.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in child.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    var str = item.GetString();
+                    if (!string.IsNullOrWhiteSpace(str)) return str;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractEditionIsbn(JsonElement root, string editionProperty)
+    {
+        if (!root.TryGetProperty(editionProperty, out var edition) || edition.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var isbn13 = ExtractFirstString(edition, "isbn_13");
+        var isbn10 = ExtractFirstString(edition, "isbn_10");
+        return NormalizeIsbn(isbn13) ?? NormalizeIsbn(isbn10);
+    }
+
+    private static string? ExtractAuthorFromContributors(JsonElement root)
+    {
+        if (root.TryGetProperty("cached_contributors", out var contribs) && contribs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in contribs.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (item.TryGetProperty("author", out var authorObj) && authorObj.ValueKind == JsonValueKind.Object)
+                {
+                    var name = ExtractFirstString(authorObj, "name");
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+        }
+
+        if (root.TryGetProperty("contributions", out var contributions) && contributions.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in contributions.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (item.TryGetProperty("author", out var authorObj) && authorObj.ValueKind == JsonValueKind.Object)
+                {
+                    var name = ExtractFirstString(authorObj, "name");
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractPrimaryAuthor(JsonElement book)
+    {
+        string? TryArray(string property)
+        {
+            if (!book.TryGetProperty(property, out var child) || child.ValueKind != JsonValueKind.Array) return null;
+            foreach (var item in child.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    var str = item.GetString();
+                    if (!string.IsNullOrWhiteSpace(str)) return str;
+                }
+            }
+            return null;
+        }
+
+        var first = TryArray("author_names") ?? TryArray("authors");
+        if (!string.IsNullOrWhiteSpace(first)) return first;
+
+        if (book.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.String)
+        {
+            var str = author.GetString();
+            if (!string.IsNullOrWhiteSpace(str)) return str;
+        }
+
+        return ExtractAuthorFromContributors(book);
+    }
+
     public async Task HideByIdsAsync(IReadOnlyCollection<int> ids, int hiddenValue = 1, CancellationToken cancellationToken = default)
     {
         if (ids is null || ids.Count == 0) return;
@@ -360,36 +461,85 @@ public class SuggestedRepository
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync(cancellationToken);
 
-        // Fetch non-hidden entries grouped by hardcover_key
-        var entries = new List<(int Id, string Key, DateTime UpdatedAt)>();
+        // Fetch non-hidden entries, including book payload for additional dedup signals.
+        var entries = new List<(int Id, string HardcoverKey, string? BookJson, DateTime UpdatedAt)>();
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = $"""
-                SELECT id, hardcover_key, updated_at
+                SELECT id, hardcover_key, book_json, updated_at
                 FROM {TableName}
                 WHERE hidden = 0
-                  AND hardcover_key IS NOT NULL
-                  AND TRIM(hardcover_key) <> ''
-                ORDER BY hardcover_key, datetime(updated_at) DESC, id DESC;
+                ORDER BY datetime(updated_at) DESC, id DESC;
                 """;
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 var id = reader.GetInt32(0);
                 var key = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
-                var updatedRaw = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var bookJson = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var updatedRaw = reader.IsDBNull(3) ? null : reader.GetString(3);
                 var updatedAt = DateTime.TryParse(updatedRaw, out var parsed) ? parsed : DateTime.MinValue;
-                entries.Add((id, key, updatedAt));
+                entries.Add((id, key, bookJson, updatedAt));
             }
         }
 
         var toHide = new List<int>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenIsbn = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenTitleAuthor = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var entry in entries)
         {
-            if (!seen.Add(entry.Key))
+            var hardcoverKey = entry.HardcoverKey?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(hardcoverKey))
             {
-                toHide.Add(entry.Id);
+                if (!seen.Add(hardcoverKey))
+                {
+                    toHide.Add(entry.Id);
+                    continue;
+                }
+            }
+
+            string? isbn = null;
+            string? title = null;
+            string? author = null;
+
+            if (!string.IsNullOrWhiteSpace(entry.BookJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(entry.BookJson);
+                    var root = doc.RootElement;
+                    isbn = NormalizeIsbn(ExtractFirstString(root, "isbn13") ?? ExtractFirstString(root, "isbn_13"))
+                          ?? NormalizeIsbn(ExtractFirstString(root, "isbn10") ?? ExtractFirstString(root, "isbn_10"))
+                          ?? ExtractEditionIsbn(root, "default_physical_edition")
+                          ?? ExtractEditionIsbn(root, "default_ebook_edition");
+                    title = NormalizeKey(ExtractFirstString(root, "title"));
+                    author = NormalizeKey(ExtractPrimaryAuthor(root));
+                }
+                catch
+                {
+                    // ignore parse errors; fallback to hardcover key only
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(isbn))
+            {
+                if (!seenIsbn.Add(isbn))
+                {
+                    toHide.Add(entry.Id);
+                    continue;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(author))
+            {
+                var combo = $"{title}||{author}";
+                if (!seenTitleAuthor.Add(combo))
+                {
+                    toHide.Add(entry.Id);
+                    continue;
+                }
             }
         }
 

@@ -7,17 +7,88 @@
 
     const states = {};
 
+    const bookKey = (book) => (
+        book?.id || book?.Id || book?.slug || book?.Slug || book?.title || book?.Title || null
+    );
+
+    function normalizeIsbnValue(value) {
+        if (typeof value !== 'string') return null;
+        const cleaned = value.replace(/[^0-9Xx]/g, '').toUpperCase();
+        return cleaned.length >= 10 ? cleaned : null;
+    }
+
+    function collectIsbnCandidates(book) {
+        const candidates = [];
+        const push = (val) => {
+            const normalized = normalizeIsbnValue(val);
+            if (normalized) candidates.push(normalized);
+        };
+        push(book.isbn13 || book.isbn_13);
+        push(book.isbn10 || book.isbn_10);
+        if (book.default_physical_edition) {
+            push(book.default_physical_edition.isbn_13);
+            push(book.default_physical_edition.isbn_10);
+        }
+        if (book.default_ebook_edition) {
+            push(book.default_ebook_edition.isbn_13);
+            push(book.default_ebook_edition.isbn_10);
+        }
+        if (Array.isArray(book.isbn13)) book.isbn13.forEach(push);
+        if (Array.isArray(book.isbn_13)) book.isbn_13.forEach(push);
+        if (Array.isArray(book.isbn10)) book.isbn10.forEach(push);
+        if (Array.isArray(book.isbn_10)) book.isbn_10.forEach(push);
+        return Array.from(new Set(candidates));
+    }
+
+    function buildKnownSets() {
+        const state = app.state || {};
+        const wanted = state.wanted || [];
+        const library = state.library || [];
+        const wantedKeys = new Set(wanted.map(bookKey).filter(Boolean));
+        const libraryKeys = new Set(library.map(bookKey).filter(Boolean));
+        const wantedIsbns = new Set();
+        const libraryIsbns = new Set();
+        wanted.forEach(b => collectIsbnCandidates(b).forEach(v => wantedIsbns.add(v)));
+        library.forEach(b => collectIsbnCandidates(b).forEach(v => libraryIsbns.add(v)));
+        return { wantedKeys, libraryKeys, wantedIsbns, libraryIsbns };
+    }
+
+    function isOwnedOrWanted(book) {
+        const key = bookKey(book);
+        const { wantedKeys, libraryKeys, wantedIsbns, libraryIsbns } = buildKnownSets();
+        if (key && (wantedKeys.has(key) || libraryKeys.has(key))) return true;
+        const isbns = collectIsbnCandidates(book);
+        return isbns.some(v => wantedIsbns.has(v) || libraryIsbns.has(v));
+    }
+
+    function removeFromState(state, key) {
+        if (!key) return false;
+        const beforeResults = state.results.length;
+        const beforeRelated = state.related?.length || 0;
+        state.results = state.results.filter(b => bookKey(b) !== key);
+        state.related = state.related.filter(b => bookKey(b) !== key);
+        return state.results.length !== beforeResults || state.related.length !== beforeRelated;
+    }
+
     function classifyResults(state) {
-        const { resultsEl, results, related, query } = state;
+        const { resultsEl, results, related, query, setStatus: stateSetStatus } = state;
         resultsEl.innerHTML = '';
-        if (!results.length && (!related || !related.length)) return;
+        const filteredResults = (results || []).filter(book => !isOwnedOrWanted(book));
+        const filteredRelated = (related || []).filter(book => !isOwnedOrWanted(book));
+        state.filteredCount = (filteredResults?.length || 0) + (filteredRelated?.length || 0);
+        if (!filteredResults.length && (!filteredRelated.length)) {
+            if (typeof stateSetStatus === 'function') {
+                stateSetStatus('No results found (already in Wanted/Bookshelf).');
+            }
+            return;
+        }
 
         const normalized = (query || '').trim().toLowerCase();
         const matches = [];
         const weakMatches = [];
         const suggestions = [];
 
-        results.forEach(book => {
+        filteredResults.forEach(book => {
             const title = (book.title || '').toLowerCase();
             const editionCount = book.edition_count ?? book.users_count ?? 0;
             const ratingRaw = book.rating ?? book.ratings_average ?? book.average_rating;
@@ -52,7 +123,25 @@
 
             const grid = document.createElement('div');
             grid.className = 'results-grid';
-            books.forEach(book => grid.appendChild(app.createBookCard(book)));
+            books.forEach(book => {
+                const key = bookKey(book);
+                const card = app.createBookCard(book, {
+                    showWanted: true,
+                    sourceInRightPill: true,
+                    showIsbnInline: true,
+                    onAddToWanted: () => {
+                        app.addToWanted(book, {
+                            onSaved: () => {
+                                if (removeFromState(state, key)) classifyResults(state);
+                            },
+                            onAlready: () => {
+                                if (removeFromState(state, key)) classifyResults(state);
+                            }
+                        });
+                    }
+                });
+                grid.appendChild(card);
+            });
             resultsEl.appendChild(grid);
         };
 
@@ -61,8 +150,8 @@
         if (suggestions.length) {
             renderSection(matches.length || weakMatches.length ? 'Suggested' : 'Related titles', suggestions);
         }
-        if (related && related.length) {
-            renderSection('Related (title/author)', related);
+        if (filteredRelated && filteredRelated.length) {
+            renderSection('Related (title/author)', filteredRelated);
         }
     }
 
@@ -98,6 +187,7 @@
             state.status = text;
             applyStatus();
         };
+        state.setStatus = setStatus;
 
         const fetchRelated = async (title) => {
             if (!title) return;

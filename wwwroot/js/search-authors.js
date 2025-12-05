@@ -13,6 +13,60 @@
     const historyContainer = panel.querySelector('.search-history');
     if (!form || !input || !statusEl || !resultsEl) return;
 
+    const bookKey = (book) => (
+        book?.id || book?.Id || book?.slug || book?.Slug || book?.title || book?.Title || null
+    );
+
+    function normalizeIsbnValue(value) {
+        if (typeof value !== 'string') return null;
+        const cleaned = value.replace(/[^0-9Xx]/g, '').toUpperCase();
+        return cleaned.length >= 10 ? cleaned : null;
+    }
+
+    function collectIsbnCandidates(book) {
+        const candidates = [];
+        const push = (val) => {
+            const normalized = normalizeIsbnValue(val);
+            if (normalized) candidates.push(normalized);
+        };
+        push(book.isbn13 || book.isbn_13);
+        push(book.isbn10 || book.isbn_10);
+        if (book.default_physical_edition) {
+            push(book.default_physical_edition.isbn_13);
+            push(book.default_physical_edition.isbn_10);
+        }
+        if (book.default_ebook_edition) {
+            push(book.default_ebook_edition.isbn_13);
+            push(book.default_ebook_edition.isbn_10);
+        }
+        if (Array.isArray(book.isbn13)) book.isbn13.forEach(push);
+        if (Array.isArray(book.isbn_13)) book.isbn_13.forEach(push);
+        if (Array.isArray(book.isbn10)) book.isbn10.forEach(push);
+        if (Array.isArray(book.isbn_10)) book.isbn_10.forEach(push);
+        return Array.from(new Set(candidates));
+    }
+
+    function buildKnownKeySets() {
+        const state = app.state || {};
+        const wanted = state.wanted || [];
+        const library = state.library || [];
+        const wantedKeys = new Set(wanted.map(bookKey).filter(Boolean));
+        const libraryKeys = new Set(library.map(bookKey).filter(Boolean));
+        const wantedIsbns = new Set();
+        const libraryIsbns = new Set();
+        wanted.forEach(b => collectIsbnCandidates(b).forEach(v => wantedIsbns.add(v)));
+        library.forEach(b => collectIsbnCandidates(b).forEach(v => libraryIsbns.add(v)));
+        return { wantedKeys, libraryKeys, wantedIsbns, libraryIsbns };
+    }
+
+    function isOwnedOrWanted(book) {
+        const key = bookKey(book);
+        const { wantedKeys, libraryKeys, wantedIsbns, libraryIsbns } = buildKnownKeySets();
+        if (key && (wantedKeys.has(key) || libraryKeys.has(key))) return true;
+        const isbns = collectIsbnCandidates(book);
+        return isbns.some(v => wantedIsbns.has(v) || libraryIsbns.has(v));
+    }
+
     const paginationEl = document.createElement('div');
     paginationEl.className = 'search-pagination hidden';
     paginationEl.innerHTML = `
@@ -243,18 +297,42 @@
                 return;
             }
             const data = await res.json();
-            const books = Array.isArray(data?.books) ? data.books : [];
+            const booksRaw = Array.isArray(data?.books) ? data.books : [];
+            const books = booksRaw.filter(book => !isOwnedOrWanted(book));
             if (!books.length) {
                 bookStatusEl.textContent = `No books found for ${authorName}.`;
                 return;
             }
-            bookStatusEl.textContent = `Books by ${authorName} · ${data?.total ?? books.length} result(s).`;
+            let remaining = books.length;
+            const updateBookStatus = () => {
+                const totalText = data?.total ?? remaining;
+                bookStatusEl.textContent = remaining > 0
+                    ? `Books by ${authorName} · ${totalText} result(s).`
+                    : `Books by ${authorName} · moved to Wanted.`;
+            };
+            updateBookStatus();
             books.forEach(book => {
-                bookResultsEl.appendChild(app.createBookCard(book, {
+                const key = bookKey(book);
+                const card = app.createBookCard(book, {
                     showWanted: true,
                     sourceInRightPill: true,
-                    showIsbnInline: true
-                }));
+                    showIsbnInline: true,
+                    onAddToWanted: () => {
+                        const removeCard = () => {
+                            if (card.parentNode) {
+                                card.parentNode.removeChild(card);
+                                remaining = Math.max(0, remaining - 1);
+                                updateBookStatus();
+                            }
+                        };
+                        app.addToWanted(book, {
+                            onSaved: removeCard,
+                            onAlready: removeCard
+                        });
+                    }
+                });
+                card.dataset.key = key || '';
+                bookResultsEl.appendChild(card);
             });
         } catch (err) {
             console.error('Author books load failed', err);

@@ -5,6 +5,7 @@
     const statusEl = document.getElementById('suggested-ignored-status');
     const resultsEl = document.getElementById('suggested-ignored-results');
     if (!statusEl || !resultsEl) return;
+    resultsEl.classList.add('results-grid');
 
     let loading = false;
     let loaded = false;
@@ -29,6 +30,8 @@
 
     function render() {
         resultsEl.innerHTML = '';
+        resultsEl.classList.remove('results-grid');
+        resultsEl.classList.add('suggested-groups');
         if (!ignoredItems.length) {
             statusEl.textContent = loaded
                 ? 'No ignored suggestions.'
@@ -37,6 +40,10 @@
         }
 
         statusEl.textContent = `Showing ${ignoredItems.length} ignored suggestion(s).`;
+        const group = document.createElement('div');
+        group.className = 'suggested-group';
+        const grid = document.createElement('div');
+        grid.className = 'results-grid';
         ignoredItems.forEach(item => {
             const book = item?.book || item?.Book;
             if (!book || typeof app.createBookCard !== 'function') return;
@@ -45,8 +52,10 @@
                 showWanted: true,
                 onAddToWanted: () => handleAddToWanted(item)
             });
-            resultsEl.appendChild(card);
+            grid.appendChild(card);
         });
+        group.appendChild(grid);
+        resultsEl.appendChild(group);
     }
 
     async function loadIgnored(force = false) {

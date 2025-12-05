@@ -172,6 +172,7 @@ public class CalibreSyncService
         if (!IsHardcoverConfigured())
         {
             _logger.LogInformation("Skipping Hardcover list cache processing because Hardcover API key is not configured.");
+            await _activityLog.InfoAsync("Suggested", "Skipped suggested sync: Hardcover API key not configured.");
             return;
         }
 
@@ -184,11 +185,16 @@ public class CalibreSyncService
             .Select(e => e.CalibreId)
             .ToHashSet();
 
-        if (pendingIds.Count == 0) return;
+        if (pendingIds.Count == 0)
+        {
+            await _activityLog.InfoAsync("Suggested", "Suggested sync: no pending Hardcover list cache entries to process.");
+            return;
+        }
 
         var processed = 0;
         var matched = 0;
         var totalRecommendations = 0;
+        var attempted = pendingIds.Count;
         foreach (var book in books.Where(b => pendingIds.Contains(b.Id)))
         {
             try
@@ -244,6 +250,7 @@ public class CalibreSyncService
         {
             await _activityLog.InfoAsync("Suggested", "Processed Calibre books for Hardcover list checks.", new
             {
+                attempted,
                 processed,
                 matchedHardcover = matched,
                 recommendationsAdded = totalRecommendations

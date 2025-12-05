@@ -371,7 +371,8 @@
                 sourceInRightPill: false,
                 showIsbnInline: false,
                 showHardcoverStatus: false,
-                suggestedHide: null
+                suggestedHide: null,
+                enableSearchLinks: false
             },
             options || {});
         const key = bookKey(book);
@@ -576,13 +577,13 @@
             </div>
         `;
 
-        const authorsMarkup = isCalibre
+        const authorsMarkup = isCalibre && !opts.enableSearchLinks
             ? renderAuthorPlain(authorNames)
             : renderAuthorLinks(authorNames);
         const calibreIsbnLine = (isCalibre && isbnDisplay && isbnDisplay !== 'N/A')
             ? `
                 <div class="book-info-label book-isbn-label">ISBN</div>
-                <div class="book-isbn-inline isbn-inline">${escapeHtml(isbnDisplay)}</div>
+                <div class="book-isbn-inline isbn-inline">${opts.enableSearchLinks ? isbnValue : escapeHtml(isbnDisplay)}</div>
               `
             : '';
 

@@ -175,7 +175,8 @@
                 resultsEl.appendChild(app.createBookCard(book, {
                     showWanted: false,
                     showAddToLibrary: false,
-                    enableViewLink: false
+                    enableViewLink: false,
+                    enableSearchLinks: true
                 }));
                 rendered += 1;
             } catch (err) {
