@@ -156,6 +156,12 @@ body {
     color: var(--text-muted);
     margin-bottom: 25px;
 }
+.status-error {
+    color: #b91c1c;
+}
+.service-alert {
+    margin-top: -6px;
+}
 .search-status-row {
     display: flex;
     align-items: center;
@@ -179,6 +185,100 @@ body {
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 0.9rem;
     align-items: stretch;
+}
+.mismatch-page-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+}
+.mismatch-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 0.9rem 1rem 1rem;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.mismatch-card .card-cover {
+    position: relative;
+    width: 100%;
+    padding-top: 140%;
+    border-radius: 10px;
+    overflow: hidden;
+    background: linear-gradient(135deg, #0f172a, #111827);
+    border: 1px solid var(--border);
+    max-height: 240px;
+}
+.mismatch-card .card-cover img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #0f172a;
+}
+.mismatch-card .card-cover.placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    border: 1px dashed var(--border);
+}
+.mismatch-card .card-title {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text);
+}
+.mismatch-card .card-meta {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+.mismatch-card .pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+.mismatch-card .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: 0.8rem;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+}
+.mismatch-page-grid .book-card {
+    min-width: 0;
+    grid-template-columns: 150px minmax(0, 1fr);
+}
+.mismatch-page-grid .book-media {
+    align-self: flex-start;
+}
+.mismatch-page-grid .book-cover {
+    aspect-ratio: 3 / 4;
+    object-fit: contain;
+    padding: 6px;
+}
+.mismatch-page-grid .mismatch-badge {
+    z-index: 2;
+}
+.mismatch-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: var(--accent);
+    color: #fff;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.35);
 }
 .suggested-groups {
     display: flex;
@@ -464,6 +564,7 @@ body {
     grid-template-columns: 150px minmax(0, 1fr);
     column-gap: 1.2rem;
     align-items: start;
+    position: relative;
 }
 .book-media {
     grid-column: 1;

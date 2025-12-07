@@ -64,12 +64,14 @@
         calibrePathInput: document.getElementById('input-calibre-path'),
         calibrePathSave: document.getElementById('btn-save-calibre-path'),
         calibrePathStatus: document.getElementById('status-calibre-path'),
-        calibreSettingsCard: document.getElementById('settings-calibre-card')
+        calibreSettingsCard: document.getElementById('settings-calibre-card'),
+        serviceStatus: document.getElementById('service-status')
     };
 
     let hardcoverSyncTimer = null;
     let calibreRefreshTimer = null;
     let hardcoverListId = null;
+    let serviceStatusTimer = null;
 
     function isHardcoverBook(book) {
         return Boolean(book && book.source === 'hardcover');
@@ -253,6 +255,33 @@
             if (refs.calibrePathStatus) {
                 refs.calibrePathStatus.textContent = 'Unable to load Calibre settings.';
             }
+        }
+    }
+
+    async function updateServiceStatus() {
+        const el = refs.serviceStatus;
+        if (!el) return;
+        const setMessage = (text, isError) => {
+            el.textContent = text;
+            el.classList.toggle('hidden', !text);
+            el.classList.toggle('status-error', !!isError);
+        };
+        try {
+            const res = await fetch(`/health/openlibrary?ts=${Date.now()}`, { cache: 'no-store' });
+            if (!res.ok) {
+                setMessage('OpenLibrary status unavailable.', true);
+                return;
+            }
+            const data = await res.json();
+            if (data?.reachable) {
+                setMessage('', false);
+            } else {
+                const reason = data?.error || `HTTP ${data?.status || 'unavailable'}`;
+                setMessage(`OpenLibrary looks down or blocked (reason: ${reason}). Search may be unavailable.`, true);
+            }
+        } catch (err) {
+            console.warn('Status check failed', err);
+            setMessage('Cannot reach OpenLibrary; search may be down.', true);
         }
     }
 
@@ -1158,6 +1187,16 @@ div.innerHTML = `
         }
     }
 
+    function startServiceStatusTimer() {
+        if (!refs.serviceStatus) return;
+        if (serviceStatusTimer) {
+            clearInterval(serviceStatusTimer);
+        }
+        const tick = () => updateServiceStatus();
+        tick();
+        serviceStatusTimer = setInterval(tick, 5 * 60 * 1000);
+    }
+
     async function pollCalibreSyncState() {
         try {
             const res = await fetch('/calibre/sync/state', { cache: 'no-store' });
@@ -1826,6 +1865,7 @@ div.innerHTML = `
     }
     refreshCalibrePathStatus();
     refreshHardcoverListStatus();
+    startServiceStatusTimer();
 
     showSection('library');
     loadWantedFromServer();

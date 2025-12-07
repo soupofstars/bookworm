@@ -74,6 +74,7 @@
         </header>
 
         <section class="content">
+            <div id="service-status" class="status service-alert hidden"></div>
             <!-- Discover: Books -->
             <div id="section-discover-books" class="hidden">
                 <div class="content-header">
@@ -220,6 +221,20 @@
                 <div id="hardcover-wanted-disclaimer" class="status hidden"></div>
                 <div id="hardcover-wanted-status" class="status">Loading from Hardcover…</div>
                 <div id="hardcover-wanted-results" class="results-grid"></div>
+            </div>
+
+            <div id="section-hardcover-mismatch" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Not synced with Hardcover</h1>
+                        <p>These Wanted books were not found on Hardcover by title/ISBN.</p>
+                    </div>
+                    <div class="section-actions">
+                        <button id="hardcover-mismatch-back" class="btn btn-ghost" type="button">Back to Hardcover</button>
+                    </div>
+                </div>
+                <div id="hardcover-mismatch-page-status" class="status">Loading…</div>
+                <div id="hardcover-mismatch-page-list" class="results-grid mismatch-page-grid"></div>
             </div>
 
             <!-- Calibre -->

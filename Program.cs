@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
@@ -29,6 +30,7 @@ static string ResolveStorageConnectionString(IConfiguration config, string conte
 
 var builder = WebApplication.CreateBuilder(args);
 var storageConnection = ResolveStorageConnectionString(builder.Configuration, builder.Environment.ContentRootPath);
+var openLibraryTimeout = TimeSpan.FromSeconds(8);
 
 // --- Services -------------------------------------------------------------
 
@@ -85,6 +87,7 @@ builder.Services.AddHttpClient("openlibrary", client =>
 {
     client.BaseAddress = new Uri("https://openlibrary.org");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("BookwormApp/1.0 (+https://github.com/soupofstars/bookworm)");
+    client.Timeout = openLibraryTimeout;
 });
 
 // --- App ------------------------------------------------------------------
@@ -110,6 +113,47 @@ app.UseStaticFiles(new StaticFileOptions
 
 // Health
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/openlibrary", async (IHttpClientFactory factory) =>
+{
+    var client = factory.CreateClient("openlibrary");
+    var sw = Stopwatch.StartNew();
+    try
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var response = await client.GetAsync("/search.json?title=ping&limit=1", cts.Token);
+        sw.Stop();
+        return Results.Ok(new
+        {
+            reachable = response.IsSuccessStatusCode,
+            status = (int)response.StatusCode,
+            latencyMs = sw.ElapsedMilliseconds,
+            source = "openlibrary"
+        });
+    }
+    catch (TaskCanceledException)
+    {
+        sw.Stop();
+        return Results.Ok(new
+        {
+            reachable = false,
+            status = 408,
+            latencyMs = sw.ElapsedMilliseconds,
+            source = "openlibrary",
+            error = "timeout"
+        });
+    }
+    catch (Exception ex)
+    {
+        sw.Stop();
+        return Results.Ok(new
+        {
+            reachable = false,
+            latencyMs = sw.ElapsedMilliseconds,
+            source = "openlibrary",
+            error = ex.Message
+        });
+    }
+});
 
 // --- Helpers ----------------------------------------------------------
 
@@ -473,7 +517,20 @@ app.MapGet("/search", async (string query, string? mode, int? page, bool? skipHi
 
     foreach (var param in searchParams)
     {
-        var response = await client.GetAsync($"/search.json?{param}={Uri.EscapeDataString(query)}&limit={pageSize}&page={pageNumber}&fields={fields}");
+        var url = $"/search.json?{param}={Uri.EscapeDataString(query)}&limit={pageSize}&page={pageNumber}&fields={fields}";
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.GetAsync(url);
+        }
+        catch (TaskCanceledException)
+        {
+            return Results.Problem($"OpenLibrary search timed out after {openLibraryTimeout.TotalSeconds:F0} seconds.", statusCode: (int)HttpStatusCode.GatewayTimeout);
+        }
+        catch (HttpRequestException ex)
+        {
+            return Results.Problem($"OpenLibrary search failed: {ex.Message}", statusCode: (int)HttpStatusCode.BadGateway);
+        }
 
         if (!response.IsSuccessStatusCode)
         {
@@ -559,7 +616,20 @@ app.MapGet("/search/authors", async (string query, int? page, int? pageSize, IHt
     var offset = (pageNumber - 1) * limit;
 
     var client = factory.CreateClient("openlibrary");
-    var response = await client.GetAsync($"/search/authors.json?q={Uri.EscapeDataString(query)}&limit={limit}&offset={offset}");
+    var authorUrl = $"/search/authors.json?q={Uri.EscapeDataString(query)}&limit={limit}&offset={offset}";
+    HttpResponseMessage response;
+    try
+    {
+        response = await client.GetAsync(authorUrl);
+    }
+    catch (TaskCanceledException)
+    {
+        return Results.Problem($"OpenLibrary author search timed out after {openLibraryTimeout.TotalSeconds:F0} seconds.", statusCode: (int)HttpStatusCode.GatewayTimeout);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Problem($"OpenLibrary author search failed: {ex.Message}", statusCode: (int)HttpStatusCode.BadGateway);
+    }
     if (!response.IsSuccessStatusCode)
     {
         var errorText = await response.Content.ReadAsStringAsync();
