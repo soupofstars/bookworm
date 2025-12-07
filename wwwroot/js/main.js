@@ -32,6 +32,7 @@
         suggested: document.getElementById('section-suggested'),
         'suggested-ignored': document.getElementById('section-suggested-ignored'),
         'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
+        'hardcover-mismatch': document.getElementById('section-hardcover-mismatch'),
         calibre: document.getElementById('section-calibre'),
         logs: document.getElementById('section-logs'),
         settings: document.getElementById('section-settings')
@@ -498,7 +499,7 @@
         const isbnValue = isbnDisplay && isbnDisplay !== 'N/A'
             ? `<button class="isbn-link" data-isbn="${isbnDisplay.replace(/"/g, '&quot;')}">${isbnDisplay}</button>`
             : isbnDisplay;
-        const nonCalibreIsbnLine = (!isCalibre && opts.showIsbnInline && isbnDisplay && isbnDisplay !== 'N/A')
+        const nonCalibreIsbnLine = (!isCalibre && !opts.useWantedLayout && opts.showIsbnInline && isbnDisplay && isbnDisplay !== 'N/A')
             ? `
                 <div class="book-info-label book-isbn-label">ISBN</div>
                 <div class="book-isbn-inline isbn-inline">${escapeHtml(isbnDisplay)}</div>
@@ -1736,6 +1737,8 @@ div.innerHTML = `
         } else if (sectionName === 'hardcover-wanted') {
             refs.topbarTitle.textContent = 'Hardcover.app · Want to read';
             window.bookwormHardcover && window.bookwormHardcover.ensureLoaded();
+        } else if (sectionName === 'hardcover-mismatch') {
+            refs.topbarTitle.textContent = 'Not synced with Hardcover';
         } else if (sectionName === 'calibre') {
             refs.topbarTitle.textContent = 'Calibre';
             window.bookwormCalibre && window.bookwormCalibre.ensureLoaded();

@@ -3,6 +3,14 @@
     if (!app) return;
 
     const statusEl = document.getElementById('hardcover-wanted-status');
+    const disclaimerEl = document.getElementById('hardcover-wanted-disclaimer');
+    const mismatchContainer = document.getElementById('hardcover-mismatch-container');
+    const mismatchToggle = document.getElementById('hardcover-mismatch-toggle');
+    const mismatchListEl = document.getElementById('hardcover-mismatch-list');
+    const mismatchPage = document.getElementById('section-hardcover-mismatch');
+    const mismatchPageStatus = document.getElementById('hardcover-mismatch-page-status');
+    const mismatchPageList = document.getElementById('hardcover-mismatch-page-list');
+    const mismatchPageBack = document.getElementById('hardcover-mismatch-back');
     const resultsEl = document.getElementById('hardcover-wanted-results');
     const searchInput = document.getElementById('hardcover-search-input');
     const searchClear = document.getElementById('hardcover-search-clear');
@@ -11,10 +19,13 @@
     let loading = false;
     let cachedBooks = [];
     let cachedFromDb = [];
+    let missingWanted = [];
+    let missingCount = 0;
     let lastLoadPromise = null;
     let searchQuery = '';
     let sortKey = 'title-asc';
     const searchCache = new WeakMap();
+    const isbnCache = new WeakMap();
 
     function coerceArray(value) {
         if (Array.isArray(value)) return value;
@@ -32,6 +43,55 @@
 
     function cleanIsbn(value) {
         return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function normalizeIsbn(value) {
+        return typeof value === 'string'
+            ? value.replace(/[^0-9Xx]/g, '').toUpperCase()
+            : '';
+    }
+
+    function collectIsbnCandidates(book) {
+        if (!book) return [];
+        if (isbnCache.has(book)) return isbnCache.get(book);
+        const values = [];
+        const push = (val) => {
+            const n = normalizeIsbn(val);
+            if (n) values.push(n);
+        };
+        push(book.isbn13 || book.isbn_13);
+        push(book.isbn10 || book.isbn_10);
+        if (book.default_physical_edition) {
+            push(book.default_physical_edition.isbn_13);
+            push(book.default_physical_edition.isbn_10);
+        }
+        if (book.default_ebook_edition) {
+            push(book.default_ebook_edition.isbn_13);
+            push(book.default_ebook_edition.isbn_10);
+        }
+        if (Array.isArray(book.isbn13)) book.isbn13.forEach(push);
+        if (Array.isArray(book.isbn_13)) book.isbn_13.forEach(push);
+        if (Array.isArray(book.isbn10)) book.isbn10.forEach(push);
+        if (Array.isArray(book.isbn_10)) book.isbn_10.forEach(push);
+        const distinct = Array.from(new Set(values));
+        isbnCache.set(book, distinct);
+        return distinct;
+    }
+
+    function extractHardcoverIds(book) {
+        if (!book) return [];
+        const ids = [
+            book.hardcover_id,
+            book.hardcoverId,
+            book.book_id,
+            book.bookId,
+            book.id
+        ].map(val => {
+            if (val == null) return '';
+            if (typeof val === 'number') return String(val);
+            return String(val).trim();
+        }).filter(Boolean);
+        return Array.from(new Set(ids));
     }
 
     function extractNames(list) {
@@ -148,6 +208,34 @@
         return text;
     }
 
+    function sharesHardcoverOrIsbn(left, right) {
+        if (!left || !right) return false;
+        const leftIds = extractHardcoverIds(left);
+        const rightIds = extractHardcoverIds(right);
+        if (leftIds.length && rightIds.some(id => leftIds.includes(id))) return true;
+
+        const leftIsbns = collectIsbnCandidates(left);
+        const rightIsbns = collectIsbnCandidates(right);
+        return leftIsbns.length && rightIsbns.some(isbn => leftIsbns.includes(isbn));
+    }
+
+    function resolveCoverUrl(book) {
+        if (!book) return '';
+        const candidates = [
+            book.coverUrl,
+            book.cover_url,
+            book.image && book.image.url,
+            book.cover,
+            book.image_url
+        ].filter(Boolean);
+        if (candidates.length) return candidates[0];
+        const coverId = book.cover_i || book.coverId;
+        if (coverId) {
+            return `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
+        }
+        return '';
+    }
+
     function matchesQuery(book, normalizedQuery) {
         if (!normalizedQuery) return true;
         return buildSearchKey(book).includes(normalizedQuery);
@@ -202,6 +290,7 @@
             statusEl.textContent = loaded
                 ? 'No “want to read” books on Hardcover yet.'
                 : statusEl.textContent;
+            updateMismatchNotice();
             return;
         }
 
@@ -216,6 +305,7 @@
             statusEl.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}".`
                 : 'No “want to read” books on Hardcover yet.';
+            updateMismatchNotice();
             return;
         }
 
@@ -226,6 +316,138 @@
         statusEl.textContent = normalizedQuery
             ? `Showing ${sorted.length} of ${total} “want to read” book(s) on Hardcover.`
             : `You have ${total} “want to read” book(s) on Hardcover.`;
+        updateMismatchNotice();
+    }
+
+    function updateMismatchNotice() {
+        if (!disclaimerEl) return;
+        // Always show the note to set expectations, even if counts aren't ready yet.
+        disclaimerEl.classList.remove('hidden');
+
+        if (!loaded) {
+            disclaimerEl.textContent = 'Checking sync with Hardcover…';
+            return;
+        }
+
+        if (!app || !app.state || !app.state.wantedLoaded) {
+            disclaimerEl.textContent = 'Loading Wanted shelf to compare against Hardcover…';
+            return;
+        }
+
+        const wanted = Array.isArray(app.state.wanted) ? app.state.wanted : [];
+        if (!wanted.length) {
+            disclaimerEl.textContent = 'No books in Wanted to compare with Hardcover.';
+            return;
+        }
+
+        missingWanted = wanted.filter(local => !cachedBooks.some(remote => sharesHardcoverOrIsbn(local, remote)));
+        missingCount = missingWanted.length;
+        renderMismatchList();
+
+        if (missingCount > 0) {
+            disclaimerEl.innerHTML = `Some Wanted books may not sync to Hardcover due to ISBN mismatches. Not synced: ${missingCount} <button id="hardcover-mismatch-link" class="btn btn-ghost btn-inline" type="button">View list</button>`;
+        } else {
+            disclaimerEl.textContent = 'All Wanted books with matching ISBN/IDs are on Hardcover.';
+        }
+        wireMismatchLink();
+        renderMismatchPageList();
+    }
+
+    function renderMismatchList() {
+        if (!mismatchContainer || !mismatchToggle || !mismatchListEl) return;
+        const count = missingWanted.length;
+        if (count === 0) {
+            mismatchContainer.classList.add('hidden');
+            mismatchListEl.classList.add('hidden');
+            mismatchToggle.textContent = 'Show not-synced list';
+            mismatchListEl.innerHTML = '';
+            return;
+        }
+
+        mismatchContainer.classList.remove('hidden');
+        mismatchToggle.textContent = `Show not-synced list (${count})`;
+
+        const items = missingWanted.map(book => {
+            const title = book?.title || book?.slug || 'Untitled';
+            const authors = Array.isArray(book?.author_names) ? book.author_names.join(', ') : '';
+            const isbns = collectIsbnCandidates(book).join(', ');
+            const safeTitle = window.bookwormApp && window.bookwormApp.escapeHtml
+                ? window.bookwormApp.escapeHtml(title)
+                : title;
+            return `<li><strong>${safeTitle}</strong>${authors ? ` — ${authors}` : ''}${isbns ? ` <span class="mismatch-isbn">(ISBN: ${isbns})</span>` : ''}</li>`;
+        }).join('');
+
+        mismatchListEl.innerHTML = `<ul class="mismatch-list">${items}</ul>`;
+    }
+
+    function wireMismatchLink() {
+        if (!disclaimerEl) return;
+        if (wireMismatchLink._attached) return;
+        disclaimerEl.addEventListener('click', (event) => {
+            if (event.target && event.target.id === 'hardcover-mismatch-link') {
+                showMismatchPage();
+            }
+        });
+        wireMismatchLink._attached = true;
+    }
+
+    function renderMismatchPageList() {
+        if (!mismatchPageList || !mismatchPageStatus) return;
+        mismatchPageList.innerHTML = '';
+        if (missingCount === 0) {
+            mismatchPageStatus.textContent = 'All Wanted books with matching ISBN/IDs are on Hardcover.';
+            return;
+        }
+        mismatchPageStatus.textContent = `Showing ${missingCount} not-synced book(s).`;
+        missingWanted.forEach(book => {
+            let card = null;
+            if (window.bookwormApp && typeof window.bookwormApp.createBookCard === 'function') {
+                card = window.bookwormApp.createBookCard(book, {
+                    showWanted: false,
+                    showAddToLibrary: false,
+                    useWantedLayout: true,
+                    showRemoveWanted: false,
+                    showIsbnInline: true,
+                    enableViewLink: true,
+                    showHardcoverStatus: false
+                });
+            }
+            if (!card) {
+                const fallback = document.createElement('div');
+                fallback.className = 'card mismatch-card';
+                fallback.textContent = book?.title || book?.slug || 'Untitled';
+                mismatchPageList.appendChild(fallback);
+                return;
+            }
+            card.classList.add('mismatch-book-card');
+            const badge = document.createElement('div');
+            badge.className = 'mismatch-badge';
+            badge.textContent = 'Not synced';
+            card.appendChild(badge);
+            mismatchPageList.appendChild(card);
+        });
+    }
+
+    function showMismatchList(forceShow) {
+        if (!mismatchContainer || !mismatchToggle || !mismatchListEl) return;
+        renderMismatchList();
+        mismatchContainer.classList.remove('hidden');
+        mismatchListEl.classList.remove('hidden');
+        mismatchToggle.textContent = `Hide not-synced list (${missingCount})`;
+        if (forceShow) return;
+    }
+
+    function showMismatchPage() {
+        renderMismatchPageList();
+        if (mismatchPage) {
+            if (window.bookwormApp && typeof window.bookwormApp.showSection === 'function') {
+                window.bookwormApp.showSection('hardcover-mismatch');
+            } else {
+                mismatchPage.classList.remove('hidden');
+            }
+        } else {
+            showMismatchList(true);
+        }
     }
 
     function loadHardcoverWanted(forceReload = false) {
@@ -294,6 +516,7 @@
                 throw err;
             } finally {
                 loading = false;
+                updateMismatchNotice();
             }
         })();
 
@@ -312,6 +535,7 @@
                 cachedBooks = cachedFromDb.slice();
                 loaded = true;
                 renderBooks();
+                updateMismatchNotice();
             }
         } catch (err) {
             console.warn('Failed to load cached Hardcover want-to-read', err);
@@ -354,6 +578,30 @@
         sortSelect.addEventListener('change', (event) => {
             sortKey = event.target.value || 'title-asc';
             renderBooks();
+        });
+    }
+    if (mismatchToggle && mismatchListEl) {
+        mismatchToggle.addEventListener('click', () => {
+            const isHidden = mismatchListEl.classList.contains('hidden');
+            mismatchListEl.classList.toggle('hidden', !isHidden);
+            mismatchToggle.textContent = isHidden
+                ? `Hide not-synced list (${missingCount})`
+                : `Show not-synced list (${missingCount})`;
+            if (isHidden && mismatchContainer) {
+                mismatchContainer.classList.remove('hidden');
+            }
+            if (isHidden) {
+                renderMismatchList();
+            }
+        });
+    }
+    if (mismatchPageBack) {
+        mismatchPageBack.addEventListener('click', () => {
+            if (window.bookwormApp && typeof window.bookwormApp.showSection === 'function') {
+                window.bookwormApp.showSection('hardcover-wanted');
+            } else if (mismatchPage) {
+                mismatchPage.classList.add('hidden');
+            }
         });
     }
 
