@@ -54,6 +54,9 @@
             <div class="nav-link" data-section="hardcover-wanted">
                 <span class="nav-dot"></span> Want to read
             </div>
+            <div class="nav-link" data-section="hardcover-owned">
+                <span class="nav-dot"></span> Owned list
+            </div>
         </div>
 
         <div class="nav-section">
@@ -237,6 +240,31 @@
                 <div id="hardcover-mismatch-page-list" class="results-grid mismatch-page-grid"></div>
             </div>
 
+            <!-- Hardcover: Owned list -->
+            <div id="section-hardcover-owned" class="hidden">
+                <div class="content-header">
+                    <div>
+                        <h1>Hardcover owned list</h1>
+                        <p>Books currently in your configured Hardcover list.</p>
+                    </div>
+                    <div class="section-actions">
+                        <select id="hardcover-owned-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
+                        <div class="suggested-search hardcover-owned-search">
+                            <input id="hardcover-owned-search-input" type="text" placeholder="Search owned list (title, author, ISBN, tag)" />
+                            <button id="hardcover-owned-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="hardcover-owned-status" class="status">Set a Hardcover list id in Settings to view your owned list.</div>
+                <div id="hardcover-owned-results" class="results-grid"></div>
+            </div>
+
             <!-- Calibre -->
             <div id="section-calibre" class="hidden">
                 <div class="content-header">
@@ -395,6 +423,7 @@
     <script src="js/search-authors.js"></script>
     <script src="js/calibre.js"></script>
     <script src="js/hardcover.js"></script>
+    <script src="js/hardcover-owned.js"></script>
     <script src="js/suggested.js"></script>
     <script src="js/suggested-ignored.js"></script>
     <script src="js/logs.js"></script>

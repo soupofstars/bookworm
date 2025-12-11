@@ -286,6 +286,19 @@ static string? ExtractKey(JsonElement book)
     return null;
 }
 
+static string? ReadJsonString(JsonElement element, string property)
+{
+    if (!element.TryGetProperty(property, out var child)) return null;
+    return child.ValueKind switch
+    {
+        JsonValueKind.String => child.GetString(),
+        JsonValueKind.Number => child.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => null
+    };
+}
+
 static JsonElement? ParseJsonElement(string? json)
 {
     if (string.IsNullOrWhiteSpace(json)) return null;
@@ -984,6 +997,308 @@ app.MapPost("/hardcover/want-to-read/cache", async (HardcoverWantCacheRequest re
     return Results.Ok(new { cached = result.Cached, removed = result.Removed });
 })
 .WithName("SetHardcoverWantCache");
+
+app.MapGet("/hardcover/owned", async (
+    int? take,
+    IHttpClientFactory factory,
+    IConfiguration config,
+    UserSettingsStore settings) =>
+{
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.BadRequest(new
+        {
+            error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey."
+        });
+    }
+
+    var listIdRaw = settings.HardcoverListId;
+    if (string.IsNullOrWhiteSpace(listIdRaw) || !int.TryParse(listIdRaw, out var listId))
+    {
+        return Results.BadRequest(new { error = "Hardcover list id not configured." });
+    }
+
+    var limit = Math.Clamp(take ?? 50, 1, 200);
+    var client = factory.CreateClient("hardcover");
+
+    const string bookFields = @"
+        id
+        title
+        slug
+        rating
+        ratings_count
+        users_count
+        cached_tags
+        cached_contributors
+        contributions(where: { contributable_type: { _eq: ""Book"" } }) {
+          contributable_type
+          author { id name slug }
+        }
+        image { url }
+    ";
+
+    var queries = new[]
+    {
+        new
+        {
+            Name = "lists",
+            Query = @"
+                query OwnedListArray($listId: Int!, $limit: Int!) {
+                  lists(where: { id: { _eq: $listId } }) {
+                    id
+                    name
+                    slug
+                    user { name username }
+                    list_books(
+                      limit: $limit
+                      order_by: { created_at: desc }
+                    ) {
+                      book { " + bookFields + @" }
+                      position
+                      date_added
+                    }
+                  }
+                }",
+            PropertyName = "lists",
+            ParseAsListItems = false,
+            PropertyIsArray = true
+        },
+        new
+        {
+            Name = "list_items_public",
+            Query = @"
+                query OwnedListPublic($listId: Int!, $limit: Int!) {
+                  list_items_public(
+                    where: { list_id: { _eq: $listId } }
+                    limit: $limit
+                    order_by: { created_at: desc }
+                  ) {
+                    book { " + bookFields + @" }
+                    list { id name slug user { name username } }
+                  }
+                }",
+            PropertyName = "list_items_public",
+            ParseAsListItems = true,
+            PropertyIsArray = true
+        },
+        new
+        {
+            Name = "list_items",
+            Query = @"
+                query OwnedListPrivate($listId: Int!, $limit: Int!) {
+                  list_items(
+                    where: { list_id: { _eq: $listId } }
+                    limit: $limit
+                    order_by: { created_at: desc }
+                  ) {
+                    book { " + bookFields + @" }
+                    list { id name slug user { name username } }
+                  }
+                }",
+            PropertyName = "list_items",
+            ParseAsListItems = true,
+            PropertyIsArray = true
+        },
+        new
+        {
+            Name = "lists_by_pk",
+            Query = @"
+                query OwnedListFallback($listId: Int!, $limit: Int!) {
+                  lists_by_pk(id: $listId) {
+                    id
+                    name
+                    slug
+                    user { name username }
+                    list_books(
+                      limit: $limit
+                      order_by: { created_at: desc }
+                    ) {
+                      book { " + bookFields + @" }
+                    }
+                  }
+                }",
+            PropertyName = "lists_by_pk",
+            ParseAsListItems = false,
+            PropertyIsArray = false
+        }
+    };
+
+    (List<JsonElement> Books, object? ListInfo)? TryParseListItems(JsonDocument? doc, string propertyName)
+    {
+        if (doc is null) return null;
+        if (!doc.RootElement.TryGetProperty("data", out var data) ||
+            !data.TryGetProperty(propertyName, out var items) ||
+            items.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        object? listInfo = null;
+        var books = new List<JsonElement>();
+        foreach (var item in items.EnumerateArray())
+        {
+            if (listInfo is null &&
+                item.TryGetProperty("list", out var listEl) &&
+                listEl.ValueKind == JsonValueKind.Object)
+            {
+                listInfo = new
+                {
+                    id = ReadJsonString(listEl, "id"),
+                    name = ReadJsonString(listEl, "name"),
+                    slug = ReadJsonString(listEl, "slug"),
+                    owner = listEl.TryGetProperty("user", out var userEl) && userEl.ValueKind == JsonValueKind.Object
+                        ? (ReadJsonString(userEl, "name") ?? ReadJsonString(userEl, "username"))
+                        : null
+                };
+            }
+
+            if (item.TryGetProperty("book", out var bookEl) && bookEl.ValueKind == JsonValueKind.Object)
+            {
+                books.Add(bookEl.Clone());
+            }
+        }
+
+        return new(books, listInfo);
+    }
+
+    (List<JsonElement> Books, object? ListInfo)? TryParseListBooks(JsonDocument? doc, string propertyName, bool propertyIsArray)
+    {
+        if (doc is null) return null;
+        if (!doc.RootElement.TryGetProperty("data", out var data) ||
+            !data.TryGetProperty(propertyName, out var listNode))
+        {
+            return null;
+        }
+
+        JsonElement listEl;
+        if (propertyIsArray)
+        {
+            if (listNode.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            listEl = listNode.EnumerateArray().FirstOrDefault();
+            if (listEl.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            if (listNode.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            listEl = listNode;
+        }
+
+        object? listInfo = new
+        {
+            id = ReadJsonString(listEl, "id"),
+            name = ReadJsonString(listEl, "name"),
+            slug = ReadJsonString(listEl, "slug"),
+            owner = listEl.TryGetProperty("user", out var userEl) && userEl.ValueKind == JsonValueKind.Object
+                ? (ReadJsonString(userEl, "name") ?? ReadJsonString(userEl, "username"))
+                : null
+        };
+
+        var books = new List<JsonElement>();
+        if (listEl.TryGetProperty("list_books", out var listBooks) && listBooks.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in listBooks.EnumerateArray())
+            {
+                if (item.TryGetProperty("book", out var bookEl) && bookEl.ValueKind == JsonValueKind.Object)
+                {
+                    books.Add(bookEl.Clone());
+                }
+            }
+        }
+
+        return new(books, listInfo);
+    }
+
+    HttpResponseMessage? lastResponse = null;
+    JsonDocument? lastDoc = null;
+    foreach (var entry in queries)
+    {
+        var payload = new
+        {
+            query = entry.Query,
+            variables = new { listId, limit }
+        };
+
+        var response = await client.PostAsJsonAsync("", payload);
+        lastResponse = response;
+
+        if (response.StatusCode == (HttpStatusCode)429)
+        {
+            return await ForwardHardcoverError(response, "owned-list");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            continue;
+        }
+
+        var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        lastDoc = doc;
+        if (HasGraphQlErrors(doc))
+        {
+            var errors = ExtractGraphQlErrors(doc);
+            if (!string.IsNullOrWhiteSpace(errors) && errors.Contains("throttle", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(
+                    title: "Hardcover rate limited",
+                    detail: errors,
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            continue;
+        }
+
+        (List<JsonElement> Books, object? ListInfo)? parsed = entry.ParseAsListItems
+            ? TryParseListItems(doc, entry.PropertyName)
+            : TryParseListBooks(doc, entry.PropertyName, entry.PropertyIsArray);
+
+        if (parsed is not null)
+        {
+            var listInfo = parsed.Value.ListInfo ?? new
+            {
+                id = listIdRaw,
+                name = (string?)null,
+                slug = (string?)null,
+                owner = (string?)null
+            };
+
+            return Results.Ok(new
+            {
+                list = listInfo,
+                count = parsed.Value.Books.Count,
+                books = parsed.Value.Books
+            });
+        }
+    }
+
+    if (lastDoc is not null)
+    {
+        var errors = ExtractGraphQlErrors(lastDoc);
+        var status = StatusCodes.Status400BadRequest;
+        if (!string.IsNullOrWhiteSpace(errors) && errors.Contains("throttle", StringComparison.OrdinalIgnoreCase))
+        {
+            status = StatusCodes.Status429TooManyRequests;
+        }
+        return Results.Problem(
+            title: "Hardcover owned list query failed",
+            detail: string.IsNullOrWhiteSpace(errors) ? "Hardcover GraphQL returned errors." : errors,
+            statusCode: status);
+    }
+
+    return lastResponse is null
+        ? Results.Problem("Unable to query Hardcover owned list.")
+        : await ForwardHardcoverError(lastResponse, "owned-list");
+})
+.WithName("GetHardcoverOwnedList");
 
 app.MapGet("/hardcover/calibre-recommendations", async (
     int? take,

@@ -33,6 +33,7 @@
         'suggested-ignored': document.getElementById('section-suggested-ignored'),
         'hardcover-wanted': document.getElementById('section-hardcover-wanted'),
         'hardcover-mismatch': document.getElementById('section-hardcover-mismatch'),
+        'hardcover-owned': document.getElementById('section-hardcover-owned'),
         calibre: document.getElementById('section-calibre'),
         logs: document.getElementById('section-logs'),
         settings: document.getElementById('section-settings')
@@ -1776,6 +1777,9 @@ div.innerHTML = `
         } else if (sectionName === 'hardcover-wanted') {
             refs.topbarTitle.textContent = 'Hardcover.app · Want to read';
             window.bookwormHardcover && window.bookwormHardcover.ensureLoaded();
+        } else if (sectionName === 'hardcover-owned') {
+            refs.topbarTitle.textContent = 'Hardcover.app · Owned list';
+            window.bookwormHardcoverOwned && window.bookwormHardcoverOwned.ensureLoaded();
         } else if (sectionName === 'hardcover-mismatch') {
             refs.topbarTitle.textContent = 'Not synced with Hardcover';
         } else if (sectionName === 'calibre') {
