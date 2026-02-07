@@ -171,8 +171,20 @@
                     </div>
                 </div>
 
-                <div id="library-status" class="status">No books on your bookshelf yet.</div>
+                <div class="search-status-row library-status-row">
+                    <div id="library-status" class="status">No books on your bookshelf yet.</div>
+                    <div id="library-pagination" class="search-pagination hidden">
+                        <button id="library-pagination-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                        <div id="library-pagination-info" class="search-pagination-info"></div>
+                        <button id="library-pagination-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                    </div>
+                </div>
                 <div id="library-results" class="results-grid"></div>
+                <div id="library-pagination-bottom" class="search-pagination hidden">
+                    <button id="library-pagination-bottom-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                    <div id="library-pagination-bottom-info" class="search-pagination-info"></div>
+                    <button id="library-pagination-bottom-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                </div>
             </div>
 
             <!-- Local Wanted -->

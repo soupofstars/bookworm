@@ -5,6 +5,8 @@
         libraryLoaded: false,
         librarySyncText: '',
         librarySort: 'title-asc',
+        libraryPage: 1,
+        libraryPageSize: 30,
         librarySearchQuery: '',
         lastCalibreSnapshot: null,
         lastCalibreBookCount: null,
@@ -52,6 +54,14 @@
         librarySortSelect: document.getElementById('library-sort'),
         librarySearchInput: document.getElementById('library-search-input'),
         librarySearchClear: document.getElementById('library-search-clear'),
+        libraryPagination: document.getElementById('library-pagination'),
+        libraryPaginationInfo: document.getElementById('library-pagination-info'),
+        libraryPaginationPrev: document.getElementById('library-pagination-prev'),
+        libraryPaginationNext: document.getElementById('library-pagination-next'),
+        libraryPaginationBottom: document.getElementById('library-pagination-bottom'),
+        libraryPaginationBottomInfo: document.getElementById('library-pagination-bottom-info'),
+        libraryPaginationBottomPrev: document.getElementById('library-pagination-bottom-prev'),
+        libraryPaginationBottomNext: document.getElementById('library-pagination-bottom-next'),
         wantedStatus: document.getElementById('wanted-status'),
         wantedResults: document.getElementById('wanted-results'),
         wantedSearchInput: document.getElementById('wanted-search-input'),
@@ -1367,6 +1377,7 @@ div.innerHTML = `
         state.libraryLoaded = true;
         state.libraryLoading = false;
         state.librarySyncText = syncText || '';
+        state.libraryPage = 1;
         renderLibrary();
         reconcileWantedAgainstLibrary().catch(err => console.error('Wanted/Calibre reconcile failed', err));
         return normalized.length;
@@ -1550,6 +1561,29 @@ div.innerHTML = `
         refs.libraryStatus.textContent = base;
     }
 
+    function updateLibraryPaginationUI(totalVisible, totalPages, showingCount) {
+        const sets = [
+            { container: refs.libraryPagination, info: refs.libraryPaginationInfo, prev: refs.libraryPaginationPrev, next: refs.libraryPaginationNext },
+            { container: refs.libraryPaginationBottom, info: refs.libraryPaginationBottomInfo, prev: refs.libraryPaginationBottomPrev, next: refs.libraryPaginationBottomNext }
+        ];
+
+        const shouldShow = totalVisible > state.libraryPageSize;
+        sets.forEach(set => {
+            if (!set.container) return;
+            if (!shouldShow) {
+                set.container.classList.add('hidden');
+                return;
+            }
+
+            set.container.classList.remove('hidden');
+            if (set.info) {
+                set.info.textContent = `Page ${state.libraryPage} of ${totalPages} · Showing ${showingCount} of ${totalVisible}`;
+            }
+            if (set.prev) set.prev.disabled = state.libraryPage <= 1;
+            if (set.next) set.next.disabled = state.libraryPage >= totalPages;
+        });
+    }
+
     function renderLibrary() {
         const { libraryStatus, libraryResults } = refs;
         libraryResults.innerHTML = '';
@@ -1587,12 +1621,26 @@ div.innerHTML = `
             libraryStatus.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}".${suffix ? ` ${suffix}` : ''}`
                 : `No books found in Calibre mirror.${suffix} Waiting for the next automatic sync.`;
+            updateLibraryPaginationUI(0, 1, 0);
             return;
         }
 
-        applyLibraryCountStatus(sorted.length, rawQuery);
+        const totalVisible = sorted.length;
+        const totalPages = Math.max(1, Math.ceil(totalVisible / state.libraryPageSize));
+        if (state.libraryPage > totalPages) state.libraryPage = totalPages;
+        if (state.libraryPage < 1) state.libraryPage = 1;
+        const start = (state.libraryPage - 1) * state.libraryPageSize;
+        const end = start + state.libraryPageSize;
+        const pageItems = sorted.slice(start, end);
 
-        sorted.forEach(book => {
+        const syncSuffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
+        const baseStatus = rawQuery
+            ? `Showing ${pageItems.length} of ${totalVisible} match(es).${syncSuffix}`
+            : `Showing ${pageItems.length} of ${totalVisible} book(s).${syncSuffix}`;
+        libraryStatus.textContent = `${baseStatus} Page ${state.libraryPage} of ${totalPages}.`;
+        updateLibraryPaginationUI(totalVisible, totalPages, pageItems.length);
+
+        pageItems.forEach(book => {
             libraryResults.appendChild(createBookCard(book, {
                 showWanted: false,
                 showAddToLibrary: false,
@@ -1833,13 +1881,17 @@ div.innerHTML = `
     if (refs.librarySearchInput) {
         refs.librarySearchInput.addEventListener('input', (event) => {
             setLibrarySearchQuery(event.target.value);
+            state.libraryPage = 1;
+            renderLibrary();
         });
     }
     if (refs.librarySearchClear && refs.librarySearchInput) {
         refs.librarySearchClear.addEventListener('click', () => {
             refs.librarySearchInput.value = '';
             setLibrarySearchQuery('');
+            state.libraryPage = 1;
             refs.librarySearchInput.focus();
+            renderLibrary();
         });
     }
     if (refs.librarySortSelect) {
@@ -1847,9 +1899,26 @@ div.innerHTML = `
         refs.librarySortSelect.addEventListener('change', (event) => {
             const value = event.target.value || 'title-asc';
             state.librarySort = value;
+            state.libraryPage = 1;
             renderLibrary();
         });
     }
+    [refs.libraryPaginationPrev, refs.libraryPaginationBottomPrev].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            if (state.libraryPage > 1) {
+                state.libraryPage -= 1;
+                renderLibrary();
+            }
+        });
+    });
+    [refs.libraryPaginationNext, refs.libraryPaginationBottomNext].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            state.libraryPage += 1;
+            renderLibrary();
+        });
+    });
 
     if (refs.wantedSearchInput) {
         refs.wantedSearchInput.addEventListener('input', (event) => {
