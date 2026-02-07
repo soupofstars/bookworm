@@ -1,6 +1,6 @@
 {
   "Version": 1,
-  "Hash": "VEmnY5EB950pfxFADbqIfSg41/NvAF0gvJt2zzrBWrs=",
+  "Hash": "lmTnFp2kIj3aMZiooQucAgDdpnK4a1CI57LtcfM+cwY=",
   "Source": "Bookworm",
   "BasePath": "_content/Bookworm",
   "Mode": "Default",
@@ -55,6 +55,25 @@
       "OriginalItemSpec": "wwwroot/js/calibre.js"
     },
     {
+      "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/hardcover-owned.js",
+      "SourceId": "Bookworm",
+      "SourceType": "Discovered",
+      "ContentRoot": "/Users/leonclaraway/Github/Bookworm/wwwroot/",
+      "BasePath": "_content/Bookworm",
+      "RelativePath": "js/hardcover-owned.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/js/hardcover-owned.js"
+    },
+    {
       "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/hardcover.js",
       "SourceId": "Bookworm",
       "SourceType": "Discovered",
@@ -74,6 +93,25 @@
       "OriginalItemSpec": "wwwroot/js/hardcover.js"
     },
     {
+      "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/logs.js",
+      "SourceId": "Bookworm",
+      "SourceType": "Discovered",
+      "ContentRoot": "/Users/leonclaraway/Github/Bookworm/wwwroot/",
+      "BasePath": "_content/Bookworm",
+      "RelativePath": "js/logs.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/js/logs.js"
+    },
+    {
       "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js",
       "SourceId": "Bookworm",
       "SourceType": "Discovered",
@@ -91,25 +129,6 @@
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "wwwroot/js/main.js"
-    },
-    {
-      "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js.bak",
-      "SourceId": "Bookworm",
-      "SourceType": "Discovered",
-      "ContentRoot": "/Users/leonclaraway/Github/Bookworm/wwwroot/",
-      "BasePath": "_content/Bookworm",
-      "RelativePath": "js/main.js.bak",
-      "AssetKind": "All",
-      "AssetMode": "All",
-      "AssetRole": "Primary",
-      "AssetMergeBehavior": "PreferTarget",
-      "AssetMergeSource": "",
-      "RelatedAsset": "",
-      "AssetTraitName": "",
-      "AssetTraitValue": "",
-      "CopyToOutputDirectory": "Never",
-      "CopyToPublishDirectory": "PreserveNewest",
-      "OriginalItemSpec": "wwwroot/js/main.js.bak"
     },
     {
       "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search-authors.js",
@@ -186,6 +205,25 @@
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "wwwroot/js/search.js"
+    },
+    {
+      "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/suggested-ignored.js",
+      "SourceId": "Bookworm",
+      "SourceType": "Discovered",
+      "ContentRoot": "/Users/leonclaraway/Github/Bookworm/wwwroot/",
+      "BasePath": "_content/Bookworm",
+      "RelativePath": "js/suggested-ignored.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/js/suggested-ignored.js"
     },
     {
       "Identity": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/suggested.js",

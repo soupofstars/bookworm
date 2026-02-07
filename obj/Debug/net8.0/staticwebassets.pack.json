@@ -9,16 +9,20 @@
       "PackagePath": "staticwebassets/js/calibre.js"
     },
     {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/hardcover-owned.js",
+      "PackagePath": "staticwebassets/js/hardcover-owned.js"
+    },
+    {
       "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/hardcover.js",
       "PackagePath": "staticwebassets/js/hardcover.js"
     },
     {
-      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js",
-      "PackagePath": "staticwebassets/js/main.js"
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/logs.js",
+      "PackagePath": "staticwebassets/js/logs.js"
     },
     {
-      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js.bak",
-      "PackagePath": "staticwebassets/js/main.js.bak"
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/main.js",
+      "PackagePath": "staticwebassets/js/main.js"
     },
     {
       "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search-authors.js",
@@ -35,6 +39,10 @@
     {
       "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/search.js",
       "PackagePath": "staticwebassets/js/search.js"
+    },
+    {
+      "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/suggested-ignored.js",
+      "PackagePath": "staticwebassets/js/suggested-ignored.js"
     },
     {
       "Id": "/Users/leonclaraway/Github/Bookworm/wwwroot/js/suggested.js",
