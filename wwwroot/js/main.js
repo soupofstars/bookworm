@@ -399,6 +399,9 @@
                 matchScore: null,
                 matchScoreLabel: null,
                 onRemoveFromWanted: null,
+                showDeletePill: false,
+                deleteLabel: 'Delete',
+                onDelete: null,
                 sourceInRightPill: false,
                 showIsbnInline: false,
                 showHardcoverStatus: false,
@@ -568,8 +571,18 @@
             if (opts.sourceInRightPill) {
                 return [{ label: 'Source:', value: formatSourceValue(book, detailsUrl) }];
             }
-            return [{ label: 'ISBN:', value: isbnValue }];
+            const pills = [{ label: 'ISBN:', value: isbnValue }];
+            return pills;
         })();
+
+        if (opts.showDeletePill) {
+            const safeKey = escapeHtml(key);
+            const deleteLabel = escapeHtml(opts.deleteLabel || 'Delete');
+            rightPills.push({
+                label: '',
+                value: `<button class="btn btn-ghost btn-delete-book" data-key="${safeKey}">${deleteLabel}</button>`
+            });
+        }
 
         let inlineViewLink = '';
         if (opts.useWantedLayout && viewLink) {
@@ -679,6 +692,23 @@ div.innerHTML = `
         if (removeWantedBtn) {
             removeWantedBtn.addEventListener('click', () => {
                 if (typeof opts.onRemoveFromWanted === 'function') {
+                    opts.onRemoveFromWanted(book);
+                } else {
+                    removeFromWanted(book);
+                }
+            });
+        }
+
+        const deleteBtn = div.querySelector('.btn-delete-book');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => {
+                if (typeof opts.onDelete === 'function') {
+                    const maybePromise = opts.onDelete(book, { button: deleteBtn, card: div });
+                    if (maybePromise && typeof maybePromise.then === 'function') {
+                        deleteBtn.disabled = true;
+                        maybePromise.finally(() => { deleteBtn.disabled = false; });
+                    }
+                } else if (typeof opts.onRemoveFromWanted === 'function') {
                     opts.onRemoveFromWanted(book);
                 } else {
                     removeFromWanted(book);

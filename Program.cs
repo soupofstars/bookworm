@@ -16,6 +16,12 @@ static string ResolveStorageConnectionString(IConfiguration config, string conte
         raw = "App_Data/bookworm.db";
     }
 
+    // Accept either a full SQLite connection string or a bare file path.
+    if (!raw.Contains('='))
+    {
+        raw = $"Data Source={raw}";
+    }
+
     var connBuilder = new SqliteConnectionStringBuilder(raw);
     var dataSource = connBuilder.DataSource;
     if (!Path.IsPathRooted(dataSource))
@@ -427,6 +433,162 @@ static IReadOnlyList<string> ExtractGenresFromCachedTags(JsonElement tagsElement
     return ordered;
 }
 
+static IReadOnlyList<string> ExtractAuthorNames(JsonElement book)
+{
+    if (book.ValueKind != JsonValueKind.Object) return Array.Empty<string>();
+
+    var names = new List<string>();
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    void Add(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0) return;
+        if (seen.Add(trimmed))
+        {
+            names.Add(trimmed);
+        }
+    }
+
+    void AddFromArray(JsonElement el)
+    {
+        if (el.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                Add(item.GetString());
+            }
+            else if (item.ValueKind == JsonValueKind.Object)
+            {
+                Add(ReadJsonString(item, "name"));
+                Add(ReadJsonString(item, "author"));
+            }
+        }
+    }
+
+    foreach (var property in new[] { "author_names", "authors" })
+    {
+        if (book.TryGetProperty(property, out var authorsEl))
+        {
+            if (authorsEl.ValueKind == JsonValueKind.String)
+            {
+                Add(authorsEl.GetString());
+            }
+            else
+            {
+                AddFromArray(authorsEl);
+            }
+        }
+    }
+
+    if (book.TryGetProperty("cached_contributors", out var contribs))
+    {
+        AddFromArray(contribs);
+    }
+
+    if (names.Count == 0 && book.TryGetProperty("contributions", out var contributions) && contributions.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var entry in contributions.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.Object &&
+                entry.TryGetProperty("author", out var authorObj) &&
+                authorObj.ValueKind == JsonValueKind.Object)
+            {
+                Add(ReadJsonString(authorObj, "name"));
+            }
+        }
+    }
+
+    return names.Count == 0 ? Array.Empty<string>() : names;
+}
+
+static string? ExtractBookTitle(JsonElement book)
+{
+    if (book.ValueKind != JsonValueKind.Object) return null;
+    foreach (var property in new[] { "title", "name" })
+    {
+        var value = ReadJsonString(book, property);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+static string? NormalizeIsbnValue(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+    var cleaned = new string(raw.Where(c => char.IsDigit(c) || c is 'X' or 'x').ToArray());
+    if (cleaned.Length < 10) return null;
+    return cleaned.ToUpperInvariant();
+}
+
+static IReadOnlyList<string> ExtractIsbnCandidates(JsonElement book)
+{
+    if (book.ValueKind != JsonValueKind.Object) return Array.Empty<string>();
+
+    var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    void Add(string? raw)
+    {
+        var norm = NormalizeIsbnValue(raw);
+        if (!string.IsNullOrWhiteSpace(norm))
+        {
+            set.Add(norm);
+        }
+    }
+
+    void AddElement(JsonElement el)
+    {
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.String:
+                Add(el.GetString());
+                break;
+            case JsonValueKind.Number:
+                Add(el.GetRawText());
+                break;
+        }
+    }
+
+    void AddProperty(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el)) return;
+        AddElement(el);
+        if (el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in el.EnumerateArray())
+            {
+                AddElement(item);
+            }
+        }
+    }
+
+    AddProperty(book, "isbn13");
+    AddProperty(book, "isbn_13");
+    AddProperty(book, "isbn10");
+    AddProperty(book, "isbn_10");
+    AddProperty(book, "isbn");
+
+    if (book.TryGetProperty("default_physical_edition", out var phys) && phys.ValueKind == JsonValueKind.Object)
+    {
+        AddProperty(phys, "isbn_13");
+        AddProperty(phys, "isbn_10");
+    }
+
+    if (book.TryGetProperty("default_ebook_edition", out var ebook) && ebook.ValueKind == JsonValueKind.Object)
+    {
+        AddProperty(ebook, "isbn_13");
+        AddProperty(ebook, "isbn_10");
+    }
+
+    return set.Count == 0 ? Array.Empty<string>() : set.ToArray();
+}
+
 static string? TryResolveGenreName(JsonElement element)
 {
     if (element.ValueKind != JsonValueKind.Object)
@@ -507,6 +669,35 @@ app.MapDelete("/wanted/{key}", async (WantedRepository repo, string key) =>
     await repo.DeleteAsync(key);
     return Results.NoContent();
 });
+
+// Calibre plugin-friendly view of wanted list (title + ISBNs)
+app.MapGet("/api/calibre/wanted", async (WantedRepository repo) =>
+{
+    var items = await repo.GetAllAsync();
+    var payload = items.Select(entry =>
+    {
+        var book = entry.Book;
+        var key = !string.IsNullOrWhiteSpace(entry.Key) ? entry.Key : (ExtractKey(book) ?? ExtractBookTitle(book));
+        var title = ExtractBookTitle(book) ?? entry.Key ?? ExtractKey(book) ?? "Untitled";
+
+        return new
+        {
+            key,
+            title,
+            authors = ExtractAuthorNames(book),
+            isbns = ExtractIsbnCandidates(book),
+            source = ReadJsonString(book, "source"),
+            slug = ReadJsonString(book, "slug")
+        };
+    }).ToList();
+
+    return Results.Ok(new
+    {
+        count = payload.Count,
+        items = payload
+    });
+})
+.WithName("GetWantedForCalibrePlugin");
 
 // Fuzzy book search via OpenLibrary
 app.MapGet("/search", async (string query, string? mode, int? page, bool? skipHistory, IHttpClientFactory factory, SearchHistoryRepository historyRepo) =>
@@ -768,7 +959,7 @@ app.MapDelete("/search/history/isbn", async (string query, SearchHistoryReposito
 })
 .WithName("DeleteIsbnSearchHistory");
 
-// Exact-title Hardcover search (kept for compatibility or future needs)
+// Hardcover search (exact title, then exact ISBN if provided; avoids like/ilike)
 app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory, IConfiguration config) =>
 {
     if (string.IsNullOrWhiteSpace(title))
@@ -784,13 +975,23 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
 
     var client = factory.CreateClient("hardcover");
 
-    var graphqlRequest = new
+    string NormalizeIsbn(string raw)
+    {
+        var cleaned = new string(raw.Where(char.IsDigit).ToArray());
+        return cleaned.Length >= 10 ? cleaned : string.Empty;
+    }
+
+    var isbn = NormalizeIsbn(title);
+    const int limit = 20;
+
+    // Exact title search
+    var titlePayload = new
     {
         query = @"
-            query BooksByTitle($title: String!) {
+            query BooksByExactTitle($title: String!, $limit: Int!) {
               books(
                 where: { title: { _eq: $title } }
-                limit: 10
+                limit: $limit
                 order_by: { users_count: desc }
               ) {
                 id
@@ -800,38 +1001,115 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
                 ratings_count
                 users_count
                 editions_count
-                default_physical_edition {
-                  isbn_13
-                  isbn_10
-                }
-                default_ebook_edition {
-                  isbn_13
-                  isbn_10
-                }
+                default_physical_edition { isbn_13 isbn_10 }
+                default_ebook_edition { isbn_13 isbn_10 }
                 cached_contributors
                 contributions(where: { contributable_type: { _eq: ""Book"" } }) {
                   contributable_type
-                  author {
-                    id
-                    name
-                    slug
-                  }
+                  author { id name slug }
                 }
-                image {
-                  url
-                }
+                image { url }
               }
             }",
-        variables = new { title }
+        variables = new { title = title.Trim(), limit }
     };
 
-    var response = await client.PostAsJsonAsync("", graphqlRequest);
+    async Task<(bool ok, List<JsonElement> books, HttpResponseMessage? response)> RunAsync(object payload)
+    {
+        var response = await client.PostAsJsonAsync("", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            return (false, new List<JsonElement>(), response);
+        }
 
-    if (!response.IsSuccessStatusCode)
-        return await ForwardHardcoverError(response, "search");
+        using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        if (HasGraphQlErrors(doc))
+        {
+            return (false, new List<JsonElement>(), response);
+        }
 
-    var resultJson = await response.Content.ReadFromJsonAsync<object>();
-    return Results.Ok(resultJson);
+        var list = new List<JsonElement>();
+        if (doc is not null &&
+            doc.RootElement.TryGetProperty("data", out var data) &&
+            data.TryGetProperty("books", out var books) &&
+            books.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in books.EnumerateArray())
+            {
+                list.Add(item.Clone());
+            }
+        }
+
+        return (true, list, response);
+    }
+
+    var (titleOk, titleBooks, titleResp) = await RunAsync(titlePayload);
+    if (titleOk && titleBooks.Count > 0)
+    {
+        return Results.Ok(new { data = new { books = titleBooks } });
+    }
+
+    // ISBN search if we have a normalized isbn
+    if (!string.IsNullOrWhiteSpace(isbn))
+    {
+        var isbnPayload = new
+        {
+            query = @"
+                query BooksByIsbn($isbn: String!, $limit: Int!) {
+                  books(
+                    where: {
+                      _or: [
+                        { isbn13: { _eq: $isbn } }
+                        { isbn_13: { _eq: $isbn } }
+                        { isbn10: { _eq: $isbn } }
+                        { isbn_10: { _eq: $isbn } }
+                        { default_physical_edition: { isbn_13: { _eq: $isbn } } }
+                        { default_physical_edition: { isbn_10: { _eq: $isbn } } }
+                        { default_ebook_edition: { isbn_13: { _eq: $isbn } } }
+                        { default_ebook_edition: { isbn_10: { _eq: $isbn } } }
+                      ]
+                    }
+                    limit: $limit
+                    order_by: { users_count: desc }
+                  ) {
+                    id
+                    title
+                    slug
+                    rating
+                    ratings_count
+                    users_count
+                    editions_count
+                    default_physical_edition { isbn_13 isbn_10 }
+                    default_ebook_edition { isbn_13 isbn_10 }
+                    cached_contributors
+                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
+                      contributable_type
+                      author { id name slug }
+                    }
+                    image { url }
+                  }
+                }",
+            variables = new { isbn, limit }
+        };
+
+        var (isbnOk, isbnBooks, isbnResp) = await RunAsync(isbnPayload);
+        if (isbnOk && isbnBooks.Count > 0)
+        {
+            return Results.Ok(new { data = new { books = isbnBooks } });
+        }
+
+        if (!isbnOk && isbnResp is not null && !isbnResp.IsSuccessStatusCode)
+        {
+            return await ForwardHardcoverError(isbnResp, "search");
+        }
+    }
+
+    if (!titleOk && titleResp is not null && !titleResp.IsSuccessStatusCode)
+    {
+        return await ForwardHardcoverError(titleResp, "search");
+    }
+
+    return Results.Ok(new { data = new { books = Array.Empty<JsonElement>() } });
 })
 .WithName("HardcoverExactSearch");
 
@@ -1018,7 +1296,8 @@ app.MapGet("/hardcover/owned", async (
         return Results.BadRequest(new { error = "Hardcover list id not configured." });
     }
 
-    var limit = Math.Clamp(take ?? 50, 1, 200);
+    // Hardcover allows large lists; default to 500 to avoid truncation (user reports 118 items).
+    var limit = Math.Clamp(take ?? 500, 1, 500);
     var client = factory.CreateClient("hardcover");
 
     const string bookFields = @"
@@ -2304,7 +2583,7 @@ app.MapPost("/hardcover/want-to-read/check", async (HardcoverWantRequest request
     return await ForwardHardcoverError(lastResponse!, "want-to-read:check");
 });
 
-app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config, HttpContext httpContext) =>
+app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest request, IHttpClientFactory factory, IConfiguration config, HttpContext httpContext, UserSettingsStore settings) =>
 {
     var incomingBookId =
     request.BookId ??
@@ -2348,73 +2627,523 @@ app.MapPost("/hardcover/want-to-read/status", async (HardcoverWantRequest reques
     var client = factory.CreateClient("hardcover");
     var debug = string.Equals(httpContext.Request.Query["debug"], "1", StringComparison.OrdinalIgnoreCase);
 
-    const string mutation = @"
-        mutation addBook($bookId: Int!, $statusId: Int!) {
-          insert_user_book(object: { book_id: $bookId, status_id: $statusId }) {
-            id
-          }
-        }";
-
-    var mutationVariables = new { bookId = (object)intId, statusId = desiredStatusId };
-    var response = await client.PostAsJsonAsync("", new
+    async Task<IResult> HandleAddAsync()
     {
-        query = mutation,
-        variables = mutationVariables
-    });
-
-    var body = await response.Content.ReadAsStringAsync();
-    if (!response.IsSuccessStatusCode)
-    {
-        return Results.Problem(
-            title: "Hardcover addBook failed",
-            detail: string.IsNullOrWhiteSpace(body) ? null : body,
-            statusCode: (int)response.StatusCode,
-            extensions: debug
-                ? new Dictionary<string, object?>
-                {
-                    ["mutation"] = mutation,
-                    ["variables"] = mutationVariables,
-                    ["raw"] = body
-                }
-                : null);
-    }
-
-    JsonDocument? doc = null;
-    try
-    {
-        doc = JsonDocument.Parse(body);
-    }
-    catch
-    {
-        // ignore parse errors; fall back to raw body
-    }
-
-    if (HasGraphQlErrors(doc))
-    {
-        var errors = ExtractGraphQlErrors(doc);
-        if (IsUniqueConflict(errors))
+        var attempts = new[]
         {
-            return Results.Ok(new { status = "ok", method = "insert", note = "already_exists", statusId = desiredStatusId });
+            new
+            {
+                Name = "insert_user_book_one",
+                Query = @"
+                    mutation addBook($bookId: Int!, $statusId: Int!) {
+                      insert_user_book_one(object: { book_id: $bookId, status_id: $statusId }) { id }
+                    }"
+            },
+            new
+            {
+                Name = "insert_user_book",
+                Query = @"
+                    mutation addBook($bookId: Int!, $statusId: Int!) {
+                      insert_user_book(object: { book_id: $bookId, status_id: $statusId }) { id }
+                    }"
+            }
+        };
+
+        var mutationVariables = new { bookId = (object)intId, statusId = desiredStatusId };
+
+        foreach (var attempt in attempts)
+        {
+            using var response = await client.PostAsJsonAsync("", new
+            {
+                query = attempt.Query,
+                variables = mutationVariables
+            });
+
+            var body = await response.Content.ReadAsStringAsync();
+            JsonDocument? doc = null;
+            string? errors = null;
+            try
+            {
+                doc = JsonDocument.Parse(body);
+                errors = HasGraphQlErrors(doc) ? ExtractGraphQlErrors(doc) : null;
+            }
+            catch
+            {
+                // ignore parse errors; fall back to raw body
+            }
+
+            if (response.IsSuccessStatusCode && string.IsNullOrWhiteSpace(errors))
+            {
+                doc?.Dispose();
+                return Results.Ok(new { status = "ok", method = attempt.Name, statusId = desiredStatusId });
+            }
+
+            if (IsUniqueConflict(errors))
+            {
+                doc?.Dispose();
+                return Results.Ok(new { status = "ok", method = attempt.Name, note = "already_exists", statusId = desiredStatusId });
+            }
+
+            if (!ReferenceEquals(attempts[^1], attempt))
+            {
+                doc?.Dispose();
+                continue;
+            }
+
+            doc?.Dispose();
+            return Results.Problem(
+                title: "Hardcover addBook failed",
+                detail: string.IsNullOrWhiteSpace(errors) ? body : errors,
+                statusCode: response.IsSuccessStatusCode ? StatusCodes.Status400BadRequest : (int)response.StatusCode,
+                extensions: debug
+                    ? new Dictionary<string, object?>
+                    {
+                        ["mutation"] = attempt.Name,
+                        ["variables"] = mutationVariables,
+                        ["raw"] = body,
+                        ["errors"] = errors
+                    }
+                    : null);
         }
 
         return Results.Problem(
             title: "Hardcover addBook failed",
-            detail: string.IsNullOrWhiteSpace(errors) ? body : errors,
-            statusCode: StatusCodes.Status400BadRequest,
-            extensions: debug
-                ? new Dictionary<string, object?>
-                {
-                    ["mutation"] = mutation,
-                    ["variables"] = mutationVariables,
-                    ["raw"] = body,
-                    ["errors"] = errors
-                }
-                : null);
+            detail: "Unknown error",
+            statusCode: StatusCodes.Status400BadRequest);
     }
 
-    return Results.Ok(new { status = "ok", method = "insert", statusId = desiredStatusId });
+    async Task<IResult> HandleRemoveAsync()
+    {
+        // Prefer removing from configured Hardcover list if available.
+        async Task<IResult?> TryRemoveFromListAsync()
+        {
+        var listIdRaw = settings.HardcoverListId;
+        int? configuredListId = int.TryParse(listIdRaw, out var parsedListId) ? parsedListId : null;
+
+            const string findQuery = @"
+                query FindListBook($listId: Int!, $bookId: Int!) {
+                  list_books(
+                    where: { list_id: { _eq: $listId }, book_id: { _eq: $bookId } }
+                    limit: 5
+                    order_by: { created_at: desc }
+                  ) {
+                    id
+                    list_id
+                  }
+                }";
+
+            const string findAnyQuery = @"
+                query FindAnyListBook($bookId: Int!) {
+                  list_books(
+                    where: { book_id: { _eq: $bookId } }
+                    limit: 5
+                    order_by: { created_at: desc }
+                  ) {
+                    id
+                    list_id
+                  }
+                }";
+
+            const string deleteMutation = @"
+                mutation RemoveBookFromList($id: Int!) {
+                  delete_list_book(id: $id) {
+                    id
+                    list_id
+                    list { name books_count }
+                  }
+                }";
+
+            async Task<(int? listBookId, int? listId)> QueryForListBookAsync(object payload)
+            {
+                using var response = await client.PostAsJsonAsync("", payload);
+                var body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return (null, null);
+                }
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(body);
+                    if (HasGraphQlErrors(doc)) return (null, null);
+                    if (doc.RootElement.TryGetProperty("data", out var data) &&
+                        data.TryGetProperty("list_books", out var items) &&
+                        items.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in items.EnumerateArray())
+                        {
+                            if (item.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number)
+                            {
+                                var lbId = idEl.GetInt32();
+                                int? listId = null;
+                                if (item.TryGetProperty("list_id", out var listEl) && listEl.ValueKind == JsonValueKind.Number)
+                                {
+                                    listId = listEl.GetInt32();
+                                }
+                                return (lbId, listId);
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    return (null, null);
+                }
+
+                return (null, null);
+            }
+
+            (int? listBookId, int? listId) = configuredListId is not null
+                ? await QueryForListBookAsync(new
+                {
+                    query = findQuery,
+                    variables = new { listId = configuredListId.Value, bookId = (object)intId }
+                })
+                : (null, null);
+
+            if (listBookId is null)
+            {
+                (listBookId, listId) = await QueryForListBookAsync(new
+                {
+                    query = findAnyQuery,
+                    variables = new { bookId = (object)intId }
+                });
+            }
+
+            if (listBookId is null)
+            {
+                return Results.Ok(new
+                {
+                    status = "ok",
+                    method = "delete_list_book",
+                    note = "not_found",
+                    statusId = desiredStatusId
+                });
+            }
+
+            var deletePayload = new
+            {
+                query = deleteMutation,
+                variables = new { id = listBookId.Value }
+            };
+
+            using var deleteResponse = await client.PostAsJsonAsync("", deletePayload);
+            var deleteBody = await deleteResponse.Content.ReadAsStringAsync();
+
+            JsonDocument? deleteDoc = null;
+            string? deleteErrors = null;
+            try
+            {
+                deleteDoc = JsonDocument.Parse(deleteBody);
+                deleteErrors = HasGraphQlErrors(deleteDoc) ? ExtractGraphQlErrors(deleteDoc) : null;
+            }
+            catch
+            {
+                // ignore parse
+            }
+
+            if (deleteResponse.IsSuccessStatusCode && string.IsNullOrWhiteSpace(deleteErrors))
+            {
+                deleteDoc?.Dispose();
+                return Results.Ok(new
+                {
+                    status = "ok",
+                    method = "delete_list_book",
+                    statusId = desiredStatusId,
+                    listId,
+                    listBookId
+                });
+            }
+
+            deleteDoc?.Dispose();
+            return null;
+        }
+
+        var listResult = await TryRemoveFromListAsync();
+        if (listResult is not null)
+        {
+            return listResult;
+        }
+
+        var attempts = new[]
+        {
+            new
+            {
+                Name = "delete_user_book",
+                RequiresStatus = false,
+                Query = @"
+                    mutation removeBook($bookId: Int!) {
+                      delete_user_book(where: { book_id: { _eq: $bookId } }) {
+                        affected_rows
+                      }
+                    }"
+            },
+            new
+            {
+                Name = "delete_user_books",
+                RequiresStatus = false,
+                Query = @"
+                    mutation removeBook($bookId: Int!) {
+                      delete_user_books(where: { book_id: { _eq: $bookId } }) {
+                        affected_rows
+                      }
+                    }"
+            },
+            new
+            {
+                Name = "update_user_book",
+                RequiresStatus = true,
+                Query = @"
+                    mutation removeBook($bookId: Int!, $statusId: Int!) {
+                      update_user_book(
+                        where: { book_id: { _eq: $bookId } },
+                        _set: { status_id: $statusId }
+                      ) {
+                        affected_rows
+                      }
+                    }"
+            },
+            new
+            {
+                Name = "update_user_books",
+                RequiresStatus = true,
+                Query = @"
+                    mutation removeBook($bookId: Int!, $statusId: Int!) {
+                      update_user_books(
+                        where: { book_id: { _eq: $bookId } },
+                        _set: { status_id: $statusId }
+                      ) {
+                        affected_rows
+                      }
+                    }"
+            }
+        };
+
+        foreach (var attempt in attempts)
+        {
+            object variables = attempt.RequiresStatus
+                ? new { bookId = (object)intId, statusId = desiredStatusId }
+                : new { bookId = (object)intId };
+
+            using var response = await client.PostAsJsonAsync("", new
+            {
+                query = attempt.Query,
+                variables
+            });
+
+            var body = await response.Content.ReadAsStringAsync();
+            JsonDocument? doc = null;
+            string? errors = null;
+            try
+            {
+                doc = JsonDocument.Parse(body);
+                errors = HasGraphQlErrors(doc) ? ExtractGraphQlErrors(doc) : null;
+            }
+            catch
+            {
+                // ignore parse errors
+            }
+
+            if (response.IsSuccessStatusCode && string.IsNullOrWhiteSpace(errors))
+            {
+                var affectedRows = 0;
+                if (doc is not null &&
+                    doc.RootElement.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty(attempt.Name, out var node) &&
+                    node.TryGetProperty("affected_rows", out var affectedEl) &&
+                    affectedEl.ValueKind == JsonValueKind.Number)
+                {
+                    affectedRows = affectedEl.GetInt32();
+                }
+
+                doc?.Dispose();
+                return Results.Ok(new
+                {
+                    status = "ok",
+                    method = attempt.Name,
+                    statusId = desiredStatusId,
+                    removed = affectedRows
+                });
+            }
+
+            if (!ReferenceEquals(attempts[^1], attempt))
+            {
+                doc?.Dispose();
+                continue;
+            }
+
+            var detail = string.IsNullOrWhiteSpace(errors) ? body : errors;
+            doc?.Dispose();
+            return Results.Problem(
+                title: "Hardcover removeBook failed",
+                detail: detail,
+                statusCode: StatusCodes.Status400BadRequest,
+                extensions: debug
+                    ? new Dictionary<string, object?>
+                    {
+                        ["mutation"] = attempt.Query,
+                        ["variables"] = variables,
+                        ["raw"] = body,
+                        ["errors"] = errors
+                    }
+                    : null);
+        }
+
+        return Results.Problem(
+            title: "Hardcover removeBook failed",
+            detail: "Unknown error",
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    return desiredStatusId == 6
+        ? await HandleRemoveAsync()
+        : await HandleAddAsync();
 })
 .WithName("SetHardcoverWantStatus");
+
+// Simple add-to-want endpoint for front-end fixes (always uses status_id = 1)
+app.MapPost("/hardcover/add-book", async (HttpRequest http, IHttpClientFactory factory, IConfiguration config) =>
+{
+    string? incomingBookId = null;
+    try
+    {
+        using var doc = await JsonDocument.ParseAsync(http.Body);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("bookId", out var idEl))
+        {
+            incomingBookId = idEl.ValueKind switch
+            {
+                JsonValueKind.String => idEl.GetString(),
+                JsonValueKind.Number => idEl.GetRawText(),
+                _ => null
+            };
+        }
+        if (string.IsNullOrWhiteSpace(incomingBookId) &&
+            root.TryGetProperty("book_id", out var altEl))
+        {
+            incomingBookId = altEl.ValueKind switch
+            {
+                JsonValueKind.String => altEl.GetString(),
+                JsonValueKind.Number => altEl.GetRawText(),
+                _ => null
+            };
+        }
+    }
+    catch
+    {
+        // fall through with null
+    }
+
+    if (string.IsNullOrWhiteSpace(incomingBookId))
+    {
+        return Results.Ok(new { status = "error", error = "bookId is required" });
+    }
+
+    if (!IsHardcoverConfigured(config))
+    {
+        return Results.Ok(new
+        {
+            status = "error",
+            error = "Hardcover API key not configured. Set Hardcover:ApiKey or env var Hardcover__ApiKey."
+        });
+    }
+
+    if (!int.TryParse(incomingBookId, out var intId))
+    {
+        return Results.Ok(new { status = "error", error = "bookId must be an integer Hardcover book id." });
+    }
+
+    var client = factory.CreateClient("hardcover");
+    var attempts = new[]
+    {
+        new
+        {
+            Name = "insert_user_book_one",
+            Payload = (object)new
+            {
+                query = @"
+                    mutation addBook($bookId: Int!) {
+                      insert_user_book_one(object: { book_id: $bookId, status_id: 1 }) {
+                        id
+                      }
+                    }",
+                variables = new { bookId = intId }
+            }
+        },
+        new
+        {
+            Name = "insert_user_book",
+            Payload = (object)new
+            {
+                query = @"
+                    mutation addBook($bookId: Int!) {
+                      insert_user_book(object: { book_id: $bookId, status_id: 1 }) {
+                        id
+                      }
+                    }",
+                variables = new { bookId = intId }
+            }
+        }
+    };
+
+    foreach (var attempt in attempts)
+    {
+        try
+        {
+            using var response = await client.PostAsJsonAsync("", attempt.Payload);
+            var body = await response.Content.ReadAsStringAsync();
+
+            string? graphErrors = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (HasGraphQlErrors(doc))
+                {
+                    graphErrors = ExtractGraphQlErrors(doc);
+                }
+            }
+            catch
+            {
+                // ignore parse issues
+            }
+
+            // Treat unique/duplicate as success
+            if (IsUniqueConflict(graphErrors))
+            {
+                return Results.Ok(new { status = "ok", method = attempt.Name, note = "already_exists" });
+            }
+
+            if (!response.IsSuccessStatusCode || !string.IsNullOrWhiteSpace(graphErrors))
+            {
+                // Try next mutation if available
+                if (!ReferenceEquals(attempts[^1], attempt))
+                {
+                    continue;
+                }
+
+                var errorMsg = !string.IsNullOrWhiteSpace(graphErrors) ? graphErrors : body;
+                return Results.Ok(new
+                {
+                    status = "error",
+                    error = $"HTTP {(int)response.StatusCode}: {errorMsg}",
+                    mutation = attempt.Name
+                });
+            }
+
+            return Results.Ok(new { status = "ok", method = attempt.Name });
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(attempts[^1], attempt))
+            {
+                return Results.Ok(new { status = "error", error = ex.Message, mutation = attempt.Name });
+            }
+        }
+    }
+
+    return Results.Ok(new { status = "error", error = "Unknown error" });
+})
+.WithName("AddHardcoverBook");
 
 app.Run();
 

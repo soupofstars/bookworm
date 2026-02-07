@@ -91,6 +91,28 @@ docker run -d \
 | `Hardcover:ApiKey` / `Hardcover__ApiKey` | Personal Hardcover token (required for Hardcover tab). |
 | `Calibre:DatabasePath` | Full path to your Calibre `metadata.db` for local sync. |
 
+## Calibre Plugin API (Wanted list)
+
+If you are building a Calibre plugin and need to know which books are marked as **Wanted** in Bookworm, use the read-only endpoint below. It returns a normalized list with titles and ISBN candidates so you can match safely inside Calibre.
+
+- `GET /api/calibre/wanted`
+- Sample response:
+```json
+{
+  "count": 1,
+  "items": [
+    {
+      "key": "the-hobbit",
+      "title": "The Hobbit",
+      "authors": ["J.R.R. Tolkien"],
+      "isbns": ["9780547928227", "054792822X"],
+      "source": "openlibrary",
+      "slug": "/works/OL263319W"
+    }
+  ]
+}
+```
+
 ## 🤝 Contributing
 
 1. Fork & branch.

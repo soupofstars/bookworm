@@ -51,6 +51,40 @@
             : '';
     }
 
+    function parseHardcoverErrorText(text) {
+        if (!text) return null;
+        try {
+            const json = JSON.parse(text);
+            if (json && typeof json === 'object') {
+                if (typeof json.error === 'string') return json.error;
+                if (typeof json.title === 'string') return json.title;
+                if (Array.isArray(json.errors) && json.errors.length) {
+                    const first = json.errors[0];
+                    if (first && typeof first.message === 'string') {
+                        return first.message;
+                    }
+                }
+            }
+        } catch {
+            // not JSON
+        }
+        return text;
+    }
+
+    function bookKey(book) {
+        if (!book) return '';
+        return book.slug || book.id || book.book_id || book.bookId || book.title || '';
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function collectIsbnCandidates(book) {
         if (!book) return [];
         if (isbnCache.has(book)) return isbnCache.get(book);
@@ -283,6 +317,49 @@
         }
     }
 
+    function resolveHardcoverNumericId(book) {
+        const ids = extractHardcoverIds(book);
+        for (const id of ids) {
+            const parsed = parseInt(id, 10);
+            if (!Number.isNaN(parsed) && parsed > 0) {
+                return parsed;
+            }
+        }
+        return null;
+    }
+
+    async function removeHardcoverBook(book) {
+        const numericId = resolveHardcoverNumericId(book);
+        if (!numericId) {
+            statusEl.textContent = 'Cannot remove: missing Hardcover id.';
+            return;
+        }
+
+        const payload = { book_id: numericId, status_id: 6, wantToRead: false };
+        statusEl.textContent = 'Removing from Hardcover…';
+
+        try {
+            const res = await fetch('/hardcover/want-to-read/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const text = await res.text();
+            if (!res.ok) {
+                const detail = parseHardcoverErrorText(text);
+                throw new Error(detail || `HTTP ${res.status}`);
+            }
+            cachedBooks = cachedBooks.filter(entry => bookKey(entry) !== bookKey(book));
+            renderBooks();
+            statusEl.textContent = 'Removed from Hardcover want-to-read.';
+        } catch (err) {
+            console.warn('Hardcover removeBook failed', err);
+            statusEl.textContent = 'Unable to remove from Hardcover.';
+        } finally {
+            updateMismatchNotice();
+        }
+    }
+
     function renderBooks() {
         resultsEl.innerHTML = '';
         const total = cachedBooks.length;
@@ -310,7 +387,14 @@
         }
 
         sorted.forEach(book => {
-            resultsEl.appendChild(app.createBookCard(book));
+            resultsEl.appendChild(app.createBookCard(book, {
+                showWanted: false,
+                showAddToLibrary: false,
+                useWantedLayout: false,
+                showDeletePill: true,
+                deleteLabel: 'Delete',
+                onDelete: () => removeHardcoverBook(book)
+            }));
         });
 
         statusEl.textContent = normalizedQuery
@@ -391,6 +475,22 @@
         wireMismatchLink._attached = true;
     }
 
+    function handleMismatchDelete(book) {
+        if (!app || typeof app.removeFromWanted !== 'function') {
+            return;
+        }
+        try {
+            app.removeFromWanted(book);
+        } catch (err) {
+            console.warn('Failed to remove wanted book while fixing mismatch', err);
+        }
+        missingWanted = missingWanted.filter(item => bookKey(item) !== bookKey(book));
+        missingCount = missingWanted.length;
+        renderMismatchPageList();
+        renderMismatchList();
+        updateMismatchNotice();
+    }
+
     function renderMismatchPageList() {
         if (!mismatchPageList || !mismatchPageStatus) return;
         mismatchPageList.innerHTML = '';
@@ -409,7 +509,10 @@
                     showRemoveWanted: false,
                     showIsbnInline: true,
                     enableViewLink: true,
-                    showHardcoverStatus: false
+                    showHardcoverStatus: false,
+                    showDeletePill: true,
+                    deleteLabel: 'Delete',
+                    onDelete: () => handleMismatchDelete(book)
                 });
             }
             if (!card) {
@@ -424,6 +527,7 @@
             badge.className = 'mismatch-badge';
             badge.textContent = 'Not synced';
             card.appendChild(badge);
+
             mismatchPageList.appendChild(card);
         });
     }
@@ -604,7 +708,6 @@
             }
         });
     }
-
     loadCachedBooks().finally(() => {
         loadHardcoverWanted();
     });

@@ -415,6 +415,28 @@
             </div>
         </div>
     </div>
+
+    <div id="mismatch-fix-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-eyebrow">Hardcover match</div>
+                    <h3 id="mismatch-fix-title">Select correct edition</h3>
+                    <div id="mismatch-fix-authors" class="modal-subtitle"></div>
+                </div>
+                <button id="mismatch-fix-close" class="btn btn-ghost" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-search">
+                    <input id="mismatch-fix-input" type="text" placeholder="Search Hardcover by title or ISBN" />
+                    <button id="mismatch-fix-search" class="btn btn-primary" type="button">Search</button>
+                </div>
+                <div id="mismatch-fix-status" class="status">Search Hardcover for a matching ISBN.</div>
+                <div id="mismatch-fix-results" class="results-grid mismatch-fix-grid"></div>
+            </div>
+        </div>
+    </div>
  
     
     <script src="js/main.js"></script>
