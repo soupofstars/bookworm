@@ -261,8 +261,20 @@
                     </div>
                 </div>
 
-                <div id="hardcover-owned-status" class="status">Set a Hardcover list id in Settings to view your owned list.</div>
+                <div class="search-status-row hardcover-status-row">
+                    <div id="hardcover-owned-status" class="status">Set a Hardcover list id in Settings to view your owned list.</div>
+                    <div id="hardcover-owned-pagination" class="search-pagination hidden">
+                        <button id="hardcover-owned-pagination-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                        <div id="hardcover-owned-pagination-info" class="search-pagination-info"></div>
+                        <button id="hardcover-owned-pagination-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                    </div>
+                </div>
                 <div id="hardcover-owned-results" class="results-grid"></div>
+                <div id="hardcover-owned-pagination-bottom" class="search-pagination hidden">
+                    <button id="hardcover-owned-pagination-bottom-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                    <div id="hardcover-owned-pagination-bottom-info" class="search-pagination-info"></div>
+                    <button id="hardcover-owned-pagination-bottom-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                </div>
             </div>
 
             <!-- Calibre -->

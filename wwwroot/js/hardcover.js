@@ -22,6 +22,7 @@
     let missingWanted = [];
     let missingCount = 0;
     let lastLoadPromise = null;
+    let wantState = null;
     let searchQuery = '';
     let sortKey = 'title-asc';
     const searchCache = new WeakMap();
@@ -69,6 +70,21 @@
             // not JSON
         }
         return text;
+    }
+
+    async function fetchHardcoverWantState(forceReload = false) {
+        if (wantState && !forceReload) {
+            return wantState;
+        }
+        try {
+            const res = await fetch('/hardcover/want-to-read/state');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            wantState = await res.json();
+        } catch (err) {
+            console.warn('Failed to load Hardcover want-to-read state', err);
+            wantState = null;
+        }
+        return wantState;
     }
 
     function bookKey(book) {
@@ -567,7 +583,27 @@
         resultsEl.innerHTML = '';
 
         lastLoadPromise = (async () => {
+            let errorMessage = '';
             try {
+                const state = await fetchHardcoverWantState(forceReload);
+                if (state && state.configured === false) {
+                    if (!cachedBooks.length && cachedFromDb.length) {
+                        cachedBooks = cachedFromDb.slice();
+                    }
+
+                    const hasCache = cachedBooks.length > 0;
+                    const message = hasCache
+                        ? `Using cached Hardcover want-to-read (${cachedBooks.length}). Set Hardcover__ApiKey to refresh.`
+                        : 'Hardcover API key not configured. Set Hardcover__ApiKey to enable Hardcover want-to-read sync.';
+                    statusEl.textContent = message;
+                    loaded = true;
+                    if (hasCache) {
+                        renderBooks();
+                        statusEl.textContent = message;
+                    }
+                    return cachedBooks;
+                }
+
                 const res = await fetch('/hardcover/want-to-read');
                 if (!res.ok) {
                     let detail = '';
@@ -576,9 +612,18 @@
                     } catch {
                         // ignore
                     }
-                    const suffix = detail ? ` (${detail})` : '';
-                    statusEl.textContent = 'Error loading from Hardcover: ' + res.status + suffix;
-                    throw new Error('Hardcover load failed');
+                    const parsedDetail = parseHardcoverErrorText(detail);
+                    errorMessage = parsedDetail || detail || `Error loading from Hardcover (HTTP ${res.status}).`;
+                    if (cachedBooks.length) {
+                        errorMessage += ` Showing cached results (${cachedBooks.length}).`;
+                    }
+                    statusEl.textContent = errorMessage;
+                    loaded = cachedBooks.length > 0;
+                    if (loaded) {
+                        renderBooks();
+                        statusEl.textContent = errorMessage;
+                    }
+                    return cachedBooks;
                 }
 
                 const data = await res.json();
@@ -615,9 +660,16 @@
                 }
                 return cachedBooks;
             } catch (err) {
-                console.error(err);
-                statusEl.textContent = 'Error talking to Bookworm API.';
-                throw err;
+                console.error('Failed to load Hardcover want-to-read', err);
+                const fallback = errorMessage || err?.message || 'Error talking to Bookworm API.';
+                statusEl.textContent = fallback;
+                if (!cachedBooks.length && cachedFromDb.length) {
+                    cachedBooks = cachedFromDb.slice();
+                    loaded = true;
+                    renderBooks();
+                    statusEl.textContent = fallback;
+                }
+                return cachedBooks;
             } finally {
                 loading = false;
                 updateMismatchNotice();

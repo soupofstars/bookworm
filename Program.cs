@@ -1004,10 +1004,6 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
                 default_physical_edition { isbn_13 isbn_10 }
                 default_ebook_edition { isbn_13 isbn_10 }
                 cached_contributors
-                contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                  contributable_type
-                  author { id name slug }
-                }
                 image { url }
               }
             }",
@@ -1082,10 +1078,6 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
                     default_physical_edition { isbn_13 isbn_10 }
                     default_ebook_edition { isbn_13 isbn_10 }
                     cached_contributors
-                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                      contributable_type
-                      author { id name slug }
-                    }
                     image { url }
                   }
                 }",
@@ -1114,7 +1106,7 @@ app.MapGet("/hardcover/search", async (string title, IHttpClientFactory factory,
 .WithName("HardcoverExactSearch");
 
 // Hardcover "Want to read" list (status_id = 1)
-app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfiguration config) =>
+app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfiguration config, HardcoverWantCacheRepository cacheRepo) =>
 {
     if (!IsHardcoverConfigured(config))
     {
@@ -1153,14 +1145,6 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
                       isbn_10
                     }
                     cached_contributors
-                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                      contributable_type
-                      author {
-                        id
-                        name
-                        slug
-                      }
-                    }
                     image {
                       url
                     }
@@ -1193,14 +1177,6 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
                       isbn_10
                     }
                     cached_contributors
-                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                      contributable_type
-                      author {
-                        id
-                        name
-                        slug
-                      }
-                    }
                     image {
                       url
                     }
@@ -1226,6 +1202,46 @@ app.MapGet("/hardcover/want-to-read", async (IHttpClientFactory factory, IConfig
         {
             return Results.Ok(resultJson);
         }
+    }
+
+    if (lastResponse?.StatusCode == (HttpStatusCode)429)
+    {
+        // Fallback to cached want-to-read if we were throttled.
+        var entries = await cacheRepo.GetAllAsync();
+        var books = new List<JsonElement>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.BookJson)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(entry.BookJson);
+                books.Add(doc.RootElement.Clone());
+            }
+            catch
+            {
+                // ignore malformed JSON
+            }
+        }
+
+        var userBooks = books.Select(book => new { book }).ToList();
+        return Results.Ok(new
+        {
+            data = new
+            {
+                me = new[]
+                {
+                    new
+                    {
+                        user_books = userBooks
+                    }
+                }
+            },
+            meta = new
+            {
+                cached = true,
+                reason = "Hardcover API rate limited (429); using cached want-to-read."
+            }
+        });
     }
 
     return await ForwardHardcoverError(lastResponse!, "want-to-read");
@@ -1297,7 +1313,9 @@ app.MapGet("/hardcover/owned", async (
     }
 
     // Hardcover allows large lists; default to 500 to avoid truncation (user reports 118 items).
-    var limit = Math.Clamp(take ?? 500, 1, 500);
+    var maxItems = Math.Clamp(take ?? 500, 1, 500);
+    const int pageCap = 25; // Smaller page size to reduce Hardcover throttle errors.
+    var pageSize = Math.Min(maxItems, pageCap);
     var client = factory.CreateClient("hardcover");
 
     const string bookFields = @"
@@ -1309,20 +1327,15 @@ app.MapGet("/hardcover/owned", async (
         users_count
         cached_tags
         cached_contributors
-        contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-          contributable_type
-          author { id name slug }
-        }
         image { url }
     ";
 
-    var queries = new[]
+    var queries = new (string Name, string Query, string PropertyName, bool ParseAsListItems, bool PropertyIsArray)[]
     {
-        new
-        {
-            Name = "lists",
-            Query = @"
-                query OwnedListArray($listId: Int!, $limit: Int!) {
+        (
+            "lists",
+            @"
+                query OwnedListArray($listId: Int!, $limit: Int!, $offset: Int!) {
                   lists(where: { id: { _eq: $listId } }) {
                     id
                     name
@@ -1330,6 +1343,7 @@ app.MapGet("/hardcover/owned", async (
                     user { name username }
                     list_books(
                       limit: $limit
+                      offset: $offset
                       order_by: { created_at: desc }
                     ) {
                       book { " + bookFields + @" }
@@ -1338,51 +1352,50 @@ app.MapGet("/hardcover/owned", async (
                     }
                   }
                 }",
-            PropertyName = "lists",
-            ParseAsListItems = false,
-            PropertyIsArray = true
-        },
-        new
-        {
-            Name = "list_items_public",
-            Query = @"
-                query OwnedListPublic($listId: Int!, $limit: Int!) {
+            "lists",
+            false,
+            true
+        ),
+        (
+            "list_items_public",
+            @"
+                query OwnedListPublic($listId: Int!, $limit: Int!, $offset: Int!) {
                   list_items_public(
                     where: { list_id: { _eq: $listId } }
                     limit: $limit
+                    offset: $offset
                     order_by: { created_at: desc }
                   ) {
                     book { " + bookFields + @" }
                     list { id name slug user { name username } }
                   }
                 }",
-            PropertyName = "list_items_public",
-            ParseAsListItems = true,
-            PropertyIsArray = true
-        },
-        new
-        {
-            Name = "list_items",
-            Query = @"
-                query OwnedListPrivate($listId: Int!, $limit: Int!) {
+            "list_items_public",
+            true,
+            true
+        ),
+        (
+            "list_items",
+            @"
+                query OwnedListPrivate($listId: Int!, $limit: Int!, $offset: Int!) {
                   list_items(
                     where: { list_id: { _eq: $listId } }
                     limit: $limit
+                    offset: $offset
                     order_by: { created_at: desc }
                   ) {
                     book { " + bookFields + @" }
                     list { id name slug user { name username } }
                   }
                 }",
-            PropertyName = "list_items",
-            ParseAsListItems = true,
-            PropertyIsArray = true
-        },
-        new
-        {
-            Name = "lists_by_pk",
-            Query = @"
-                query OwnedListFallback($listId: Int!, $limit: Int!) {
+            "list_items",
+            true,
+            true
+        ),
+        (
+            "lists_by_pk",
+            @"
+                query OwnedListFallback($listId: Int!, $limit: Int!, $offset: Int!) {
                   lists_by_pk(id: $listId) {
                     id
                     name
@@ -1390,16 +1403,17 @@ app.MapGet("/hardcover/owned", async (
                     user { name username }
                     list_books(
                       limit: $limit
+                      offset: $offset
                       order_by: { created_at: desc }
                     ) {
                       book { " + bookFields + @" }
                     }
                   }
                 }",
-            PropertyName = "lists_by_pk",
-            ParseAsListItems = false,
-            PropertyIsArray = false
-        }
+            "lists_by_pk",
+            false,
+            false
+        )
     };
 
     (List<JsonElement> Books, object? ListInfo)? TryParseListItems(JsonDocument? doc, string propertyName)
@@ -1497,34 +1511,100 @@ app.MapGet("/hardcover/owned", async (
         return new(books, listInfo);
     }
 
+    async Task<(bool Success, List<JsonElement> Books, object? ListInfo, HttpResponseMessage? Response, JsonDocument? Doc, bool GraphQlErrors)> FetchPagedAsync((string Name, string Query, string PropertyName, bool ParseAsListItems, bool PropertyIsArray) entry)
+    {
+        var books = new List<JsonElement>();
+        object? listInfo = null;
+        HttpResponseMessage? response = null;
+        JsonDocument? doc = null;
+
+        while (books.Count < maxItems)
+        {
+            var remaining = maxItems - books.Count;
+            var pageLimit = Math.Min(pageSize, remaining);
+            var offset = books.Count;
+
+            var payload = new
+            {
+                query = entry.Query,
+                variables = new { listId, limit = pageLimit, offset }
+            };
+
+            response = await client.PostAsJsonAsync("", payload);
+            if (response.StatusCode == (HttpStatusCode)429)
+            {
+                return (false, books, listInfo, response, null, false);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, books, listInfo, response, null, false);
+            }
+
+            doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            var hasErrors = HasGraphQlErrors(doc);
+            if (hasErrors)
+            {
+                return (false, books, listInfo, response, doc, true);
+            }
+
+            (List<JsonElement> Books, object? ListInfo)? parsed = entry.ParseAsListItems
+                ? TryParseListItems(doc, entry.PropertyName)
+                : TryParseListBooks(doc, entry.PropertyName, entry.PropertyIsArray);
+
+            if (parsed is null)
+            {
+                return (false, books, listInfo, response, doc, false);
+            }
+
+            if (listInfo is null && parsed.Value.ListInfo is not null)
+            {
+                listInfo = parsed.Value.ListInfo;
+            }
+
+            var pageBooks = parsed.Value.Books;
+            if (pageBooks.Count == 0)
+            {
+                break;
+            }
+
+            books.AddRange(pageBooks);
+            if (pageBooks.Count < pageLimit)
+            {
+                break;
+            }
+        }
+
+        if (books.Count == 0 && listInfo is null)
+        {
+            return (false, books, listInfo, response, doc, false);
+        }
+
+        return (true, books, listInfo, response, doc, false);
+    }
+
     HttpResponseMessage? lastResponse = null;
     JsonDocument? lastDoc = null;
     foreach (var entry in queries)
     {
-        var payload = new
+        var result = await FetchPagedAsync(entry);
+        if (result.Response is not null)
         {
-            query = entry.Query,
-            variables = new { listId, limit }
-        };
-
-        var response = await client.PostAsJsonAsync("", payload);
-        lastResponse = response;
-
-        if (response.StatusCode == (HttpStatusCode)429)
+            lastResponse = result.Response;
+        }
+        if (result.Doc is not null)
         {
-            return await ForwardHardcoverError(response, "owned-list");
+            lastDoc = result.Doc;
         }
 
-        if (!response.IsSuccessStatusCode)
+        if (result.Response?.StatusCode == (HttpStatusCode)429)
         {
-            continue;
+            return await ForwardHardcoverError(result.Response, "owned-list");
         }
 
-        var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
-        lastDoc = doc;
-        if (HasGraphQlErrors(doc))
+        if (result.GraphQlErrors && result.Doc is not null)
         {
-            var errors = ExtractGraphQlErrors(doc);
+            var errors = ExtractGraphQlErrors(result.Doc);
             if (!string.IsNullOrWhiteSpace(errors) && errors.Contains("throttle", StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Problem(
@@ -1536,27 +1616,29 @@ app.MapGet("/hardcover/owned", async (
             continue;
         }
 
-        (List<JsonElement> Books, object? ListInfo)? parsed = entry.ParseAsListItems
-            ? TryParseListItems(doc, entry.PropertyName)
-            : TryParseListBooks(doc, entry.PropertyName, entry.PropertyIsArray);
-
-        if (parsed is not null)
+        if (!result.Success)
         {
-            var listInfo = parsed.Value.ListInfo ?? new
-            {
-                id = listIdRaw,
-                name = (string?)null,
-                slug = (string?)null,
-                owner = (string?)null
-            };
-
-            return Results.Ok(new
-            {
-                list = listInfo,
-                count = parsed.Value.Books.Count,
-                books = parsed.Value.Books
-            });
+            continue;
         }
+
+        var listInfo = result.ListInfo ?? new
+        {
+            id = listIdRaw,
+            name = (string?)null,
+            slug = (string?)null,
+            owner = (string?)null
+        };
+
+        var booksForResponse = result.Books.Count > maxItems
+            ? result.Books.Take(maxItems).ToList()
+            : result.Books;
+
+        return Results.Ok(new
+        {
+            list = listInfo,
+            count = booksForResponse.Count,
+            books = booksForResponse
+        });
     }
 
     if (lastDoc is not null)

@@ -44,14 +44,6 @@ public class HardcoverWantSyncSchedule : BackgroundService
                       isbn_10
                     }
                     cached_contributors
-                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                      contributable_type
-                      author {
-                        id
-                        name
-                        slug
-                      }
-                    }
                     image {
                       url
                     }
@@ -84,14 +76,6 @@ public class HardcoverWantSyncSchedule : BackgroundService
                       isbn_10
                     }
                     cached_contributors
-                    contributions(where: { contributable_type: { _eq: ""Book"" } }) {
-                      contributable_type
-                      author {
-                        id
-                        name
-                        slug
-                      }
-                    }
                     image {
                       url
                     }
@@ -155,10 +139,18 @@ public class HardcoverWantSyncSchedule : BackgroundService
     {
         try
         {
+            var existing = await _cacheRepo.GetStatsAsync(cancellationToken);
             var books = await FetchWantToReadAsync(cancellationToken);
             if (books.Count == 0)
             {
-                _logger.LogInformation("Hardcover want-to-read sync: no books returned.");
+                if (existing.Count > 0)
+                {
+                    _logger.LogWarning("Hardcover want-to-read sync returned 0 books; preserving existing cache of {Count}.", existing.Count);
+                    await _activityLog.WarnAsync("Hardcover want sync", "Hardcover want-to-read returned 0 books; keeping existing cache.", new { existing = existing.Count });
+                    return;
+                }
+
+                _logger.LogInformation("Hardcover want-to-read sync: no books returned and no existing cache.");
             }
             var replace = await _cacheRepo.ReplaceAllAsync(books, cancellationToken);
             _logger.LogInformation("Hardcover want-to-read sync completed. Cached {Cached} book(s). Removed {Removed}.", replace.Cached, replace.Removed);

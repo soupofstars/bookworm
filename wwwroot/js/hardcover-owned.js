@@ -7,11 +7,29 @@
     const searchInput = document.getElementById('hardcover-owned-search-input');
     const searchClear = document.getElementById('hardcover-owned-search-clear');
     const sortSelect = document.getElementById('hardcover-owned-sort');
+    const paginationBars = [
+        {
+            el: document.getElementById('hardcover-owned-pagination'),
+            info: document.getElementById('hardcover-owned-pagination-info'),
+            prev: document.getElementById('hardcover-owned-pagination-prev'),
+            next: document.getElementById('hardcover-owned-pagination-next')
+        },
+        {
+            el: document.getElementById('hardcover-owned-pagination-bottom'),
+            info: document.getElementById('hardcover-owned-pagination-bottom-info'),
+            prev: document.getElementById('hardcover-owned-pagination-bottom-prev'),
+            next: document.getElementById('hardcover-owned-pagination-bottom-next')
+        }
+    ];
 
     let cachedBooks = [];
     let listMeta = null;
     let searchQuery = '';
     let sortKey = 'title-asc';
+    let currentPage = 1;
+    const PAGE_SIZE = 10;
+    const AUTO_PAGE_INTERVAL_MS = 10_000;
+    let autoPageTimer = null;
     let loaded = false;
     let loading = false;
     let lastLoadPromise = null;
@@ -95,6 +113,8 @@
             statusEl.textContent = loaded
                 ? 'No books found in your Hardcover owned list yet.'
                 : statusEl.textContent;
+            updatePaginationUI(0, 1, 0);
+            stopAutoPaging();
             return;
         }
 
@@ -108,10 +128,21 @@
             statusEl.textContent = normalizedQuery
                 ? `No matches for "${searchQuery.trim()}".`
                 : 'No books found in your Hardcover owned list yet.';
+            updatePaginationUI(0, 1, 0);
+            stopAutoPaging();
             return;
         }
 
-        sorted.forEach(book => {
+        const totalVisible = sorted.length;
+        const totalPages = Math.max(1, Math.ceil(totalVisible / PAGE_SIZE));
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const end = start + PAGE_SIZE;
+        const pageItems = sorted.slice(start, end);
+
+        pageItems.forEach(book => {
             resultsEl.appendChild(app.createBookCard(book, { showWanted: false, useWantedLayout: false }));
         });
 
@@ -123,8 +154,45 @@
         })();
 
         statusEl.textContent = normalizedQuery
-            ? `Showing ${sorted.length} of ${total} book(s) in ${listLabel}.`
-            : `You have ${total} book(s) in ${listLabel}.`;
+            ? `Showing ${pageItems.length} of ${visible.length} match(es) in ${listLabel} (page ${currentPage} of ${totalPages}).`
+            : `Showing ${pageItems.length} of ${total} book(s) in ${listLabel} (page ${currentPage} of ${totalPages}).`;
+
+        updatePaginationUI(totalVisible, totalPages, pageItems.length);
+        restartAutoPaging(totalPages);
+    }
+
+    function updatePaginationUI(totalVisible, totalPages, showingCount) {
+        const shouldShow = totalVisible > PAGE_SIZE;
+        paginationBars.forEach(bar => {
+            if (!bar?.el) return;
+            if (!shouldShow) {
+                bar.el.classList.add('hidden');
+                return;
+            }
+
+            bar.el.classList.remove('hidden');
+            if (bar.info) {
+                bar.info.textContent = `Page ${currentPage} of ${totalPages} · Showing ${showingCount} of ${totalVisible}`;
+            }
+            if (bar.prev) bar.prev.disabled = currentPage <= 1;
+            if (bar.next) bar.next.disabled = currentPage >= totalPages;
+        });
+    }
+
+    function stopAutoPaging() {
+        if (autoPageTimer) {
+            clearTimeout(autoPageTimer);
+            autoPageTimer = null;
+        }
+    }
+
+    function restartAutoPaging(totalPages) {
+        stopAutoPaging();
+        if (totalPages <= 1) return;
+        autoPageTimer = setTimeout(() => {
+            currentPage = currentPage >= totalPages ? 1 : currentPage + 1;
+            renderBooks();
+        }, AUTO_PAGE_INTERVAL_MS);
     }
 
     async function loadOwnedList(forceReload = false) {
@@ -148,6 +216,7 @@
                 const res = await fetch('/hardcover/owned');
                 if (!res.ok) {
                     let message = `Unable to load Hardcover owned list (HTTP ${res.status})`;
+                    let rawDetail = '';
                     try {
                         const data = await res.json();
                         if (data && (data.error || data.detail || data.title)) {
@@ -155,17 +224,34 @@
                         }
                     } catch {
                         try {
-                            const text = await res.text();
-                            if (text) message = text;
+                            rawDetail = await res.text();
+                            if (rawDetail) message = rawDetail;
                         } catch {
                             // ignore
                         }
                     }
-                    if (statusEl) {
-                        statusEl.textContent = message;
+                    if (rawDetail && rawDetail.trim().startsWith('{')) {
+                        try {
+                            const parsed = JSON.parse(rawDetail);
+                            if (parsed && typeof parsed.error === 'string') {
+                                message = parsed.error;
+                            }
+                        } catch {
+                            // ignore parse errors
+                        }
                     }
-                    loaded = false;
-                    throw new Error(message);
+                    if (res.status === 429 && !message.toLowerCase().includes('throttle')) {
+                        message = 'Hardcover rate limited. Please retry in a minute.';
+                    }
+                    if (statusEl) {
+                        const suffix = cachedBooks.length ? ` Showing cached results (${cachedBooks.length}).` : '';
+                        statusEl.textContent = `${message}${suffix}`;
+                    }
+                    loaded = cachedBooks.length > 0;
+                    if (loaded) {
+                        renderBooks();
+                    }
+                    return cachedBooks;
                 }
 
                 const data = await res.json();
@@ -184,12 +270,21 @@
                 listMeta = listInfo;
 
                 cachedBooks = items.map(normalizeBook).filter(Boolean);
+                currentPage = 1;
                 loaded = true;
                 renderBooks();
                 return cachedBooks;
             } catch (err) {
                 console.error('Failed to load Hardcover owned list', err);
-                throw err;
+                if (statusEl) {
+                    const message = (err && err.message) ? err.message : 'Error talking to Bookworm API.';
+                    statusEl.textContent = message;
+                }
+                loaded = cachedBooks.length > 0;
+                if (loaded) {
+                    renderBooks();
+                }
+                return cachedBooks;
             } finally {
                 loading = false;
             }
@@ -201,6 +296,7 @@
     if (searchInput) {
         searchInput.addEventListener('input', (event) => {
             searchQuery = event.target.value || '';
+            currentPage = 1;
             renderBooks();
         });
     }
@@ -208,6 +304,7 @@
         searchClear.addEventListener('click', () => {
             searchInput.value = '';
             searchQuery = '';
+            currentPage = 1;
             renderBooks();
             searchInput.focus();
         });
@@ -216,9 +313,26 @@
         sortSelect.value = sortKey;
         sortSelect.addEventListener('change', (event) => {
             sortKey = event.target.value || 'title-asc';
+            currentPage = 1;
             renderBooks();
         });
     }
+    paginationBars.forEach(bar => {
+        if (bar.prev) {
+            bar.prev.addEventListener('click', () => {
+                if (currentPage > 1) {
+                    currentPage -= 1;
+                    renderBooks();
+                }
+            });
+        }
+        if (bar.next) {
+            bar.next.addEventListener('click', () => {
+                currentPage += 1;
+                renderBooks();
+            });
+        }
+    });
 
     window.bookwormHardcoverOwned = {
         ensureLoaded(forceReload) {
@@ -228,4 +342,8 @@
             return loadOwnedList(true);
         }
     };
+
+    window.addEventListener('beforeunload', () => {
+        stopAutoPaging();
+    });
 })();
