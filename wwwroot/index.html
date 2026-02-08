@@ -310,6 +310,13 @@
                             <option value="author-asc">Author A–Z</option>
                             <option value="author-desc">Author Z–A</option>
                         </select>
+                        <select id="calibre-page-size" class="select-sort">
+                            <option value="30">30 / page</option>
+                            <option value="60">60 / page</option>
+                            <option value="90">90 / page</option>
+                            <option value="150">150 / page</option>
+                            <option value="0">Show all</option>
+                        </select>
                         <div class="suggested-search calibre-search">
                             <input id="calibre-search-input" type="text" placeholder="Search Calibre (title, author, ISBN, tag)" />
                             <button id="calibre-search-clear" class="btn btn-ghost" title="Clear search">×</button>
@@ -317,8 +324,20 @@
                     </div>
                 </div>
 
-                <div id="calibre-status" class="status">Calibre integration coming soon.</div>
+                <div class="search-status-row calibre-status-row">
+                    <div id="calibre-status" class="status">Calibre integration coming soon.</div>
+                    <div id="calibre-pagination" class="search-pagination hidden">
+                        <button id="calibre-pagination-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                        <div id="calibre-pagination-info" class="search-pagination-info"></div>
+                        <button id="calibre-pagination-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                    </div>
+                </div>
                 <div id="calibre-results" class="results-grid"></div>
+                <div id="calibre-pagination-bottom" class="search-pagination hidden">
+                    <button id="calibre-pagination-bottom-prev" type="button" class="btn btn-ghost search-page-prev">Prev</button>
+                    <div id="calibre-pagination-bottom-info" class="search-pagination-info"></div>
+                    <button id="calibre-pagination-bottom-next" type="button" class="btn btn-ghost search-page-next">Next</button>
+                </div>
             </div>
 
             <!-- Suggested (Hardcover people lists based on Calibre) -->

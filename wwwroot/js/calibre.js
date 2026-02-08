@@ -7,6 +7,15 @@
     const searchInput = document.getElementById('calibre-search-input');
     const searchClear = document.getElementById('calibre-search-clear');
     const sortSelect = document.getElementById('calibre-sort');
+    const pageSizeSelect = document.getElementById('calibre-page-size');
+    const pagination = document.getElementById('calibre-pagination');
+    const paginationInfo = document.getElementById('calibre-pagination-info');
+    const paginationPrev = document.getElementById('calibre-pagination-prev');
+    const paginationNext = document.getElementById('calibre-pagination-next');
+    const paginationBottom = document.getElementById('calibre-pagination-bottom');
+    const paginationBottomInfo = document.getElementById('calibre-pagination-bottom-info');
+    const paginationBottomPrev = document.getElementById('calibre-pagination-bottom-prev');
+    const paginationBottomNext = document.getElementById('calibre-pagination-bottom-next');
     if (!statusEl || !resultsEl) return;
 
     let loaded = false;
@@ -16,6 +25,8 @@
     let allBooks = [];
     let searchCache = new WeakMap();
     let sortKey = 'title-asc';
+    let page = 1;
+    let pageSize = 30;
 
     function toArray(value) {
         if (Array.isArray(value)) return value;
@@ -152,6 +163,25 @@
         }
     }
 
+    function updatePaginationUI(totalVisible, totalPages, showingCount) {
+        const sets = [
+            { container: pagination, info: paginationInfo, prev: paginationPrev, next: paginationNext },
+            { container: paginationBottom, info: paginationBottomInfo, prev: paginationBottomPrev, next: paginationBottomNext }
+        ];
+        const shouldShow = pageSize !== 0 && totalVisible > pageSize;
+        sets.forEach(set => {
+            if (!set?.container) return;
+            if (!shouldShow) {
+                set.container.classList.add('hidden');
+                return;
+            }
+            set.container.classList.remove('hidden');
+            if (set.info) set.info.textContent = `Page ${page} of ${totalPages}`;
+            if (set.prev) set.prev.disabled = page <= 1;
+            if (set.next) set.next.disabled = page >= totalPages;
+        });
+    }
+
     function renderBooks() {
         if (!allBooks.length) return;
         resultsEl.innerHTML = '';
@@ -166,11 +196,19 @@
             statusEl.textContent = rawQuery
                 ? `No matches for "${rawQuery.trim()}". ${lastSyncText}`
                 : `No books found in Calibre mirror. ${lastSyncText}`;
+            updatePaginationUI(0, 1, 0);
             return;
         }
 
-        let rendered = 0;
-        sorted.forEach(book => {
+        const effectivePageSize = pageSize === 0 ? sorted.length : pageSize;
+        const totalPages = Math.max(1, Math.ceil(sorted.length / effectivePageSize));
+        if (page > totalPages) page = totalPages;
+        if (page < 1) page = 1;
+        const start = pageSize === 0 ? 0 : (page - 1) * effectivePageSize;
+        const end = pageSize === 0 ? sorted.length : start + effectivePageSize;
+        const pageItems = sorted.slice(start, end);
+
+        pageItems.forEach(book => {
             try {
                 resultsEl.appendChild(app.createBookCard(book, {
                     showWanted: false,
@@ -178,18 +216,18 @@
                     enableViewLink: false,
                     enableSearchLinks: true
                 }));
-                rendered += 1;
             } catch (err) {
                 console.error('Failed to render Calibre book', book, err);
             }
         });
 
-        const prefix = normalizedQuery
-            ? `Showing ${rendered} of ${allBooks.length} Calibre book(s).`
-            : `Showing ${rendered} of ${allBooks.length} book(s).`;
+        const base = normalizedQuery
+            ? `${sorted.length} match(es).`
+            : `${sorted.length} book(s).`;
         statusEl.textContent = lastSyncText
-            ? `${prefix} ${lastSyncText}`
-            : prefix;
+            ? `${base} ${lastSyncText}`
+            : base;
+        updatePaginationUI(sorted.length, totalPages, pageItems.length);
     }
 
     async function loadCalibreBooks(force = false) {
@@ -199,6 +237,7 @@
             loaded = false;
             allBooks = [];
             searchCache = new WeakMap();
+            page = 1;
         }
         statusEl.textContent = 'Loading Calibre library…';
         resultsEl.innerHTML = '';
@@ -237,6 +276,7 @@
             allBooks = normalized;
             lastSyncText = syncInfo;
             loaded = true;
+            page = 1;
             renderBooks();
             if (typeof app.setLibraryFromCalibre === 'function') {
                 app.setLibraryFromCalibre(books, syncInfo);
@@ -264,6 +304,7 @@
     if (searchInput) {
         searchInput.addEventListener('input', (event) => {
             searchQuery = event.target.value || '';
+            page = 1;
             renderBooks();
         });
     }
@@ -271,6 +312,7 @@
         searchClear.addEventListener('click', () => {
             searchInput.value = '';
             searchQuery = '';
+            page = 1;
             renderBooks();
             searchInput.focus();
         });
@@ -279,8 +321,34 @@
         sortSelect.value = sortKey;
         sortSelect.addEventListener('change', (event) => {
             sortKey = event.target.value || 'title-asc';
+            page = 1;
             renderBooks();
         });
     }
+    if (pageSizeSelect) {
+        pageSizeSelect.value = String(pageSize);
+        pageSizeSelect.addEventListener('change', (event) => {
+            const value = parseInt(event.target.value, 10);
+            pageSize = Number.isNaN(value) ? 30 : value;
+            page = 1;
+            renderBooks();
+        });
+    }
+    [paginationPrev, paginationBottomPrev].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            if (page > 1) {
+                page -= 1;
+                renderBooks();
+            }
+        });
+    });
+    [paginationNext, paginationBottomNext].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            page += 1;
+            renderBooks();
+        });
+    });
 
 })();
