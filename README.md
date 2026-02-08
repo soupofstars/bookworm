@@ -31,6 +31,8 @@ It’s powered by **Open Library** for discovery/search and **Hardcover** for pe
 - **Calibre integration**:
   - Reads directly from your Calibre **metadata.db**
   - Lets Bookworm understand what you already own so you don’t re-want duplicates
+- **Optional Calibre + Anna’s Archive helper**:
+  - If you want a Calibre plugin that can cross-reference Anna’s Archive, check out: https://github.com/soupofstars/calibre_annas_archive
 
 ---
 
