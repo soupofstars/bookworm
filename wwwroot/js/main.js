@@ -52,6 +52,7 @@
         libraryStatus: document.getElementById('library-status'),
         libraryResults: document.getElementById('library-results'),
         librarySortSelect: document.getElementById('library-sort'),
+        libraryPageSizeSelect: document.getElementById('library-page-size'),
         librarySearchInput: document.getElementById('library-search-input'),
         librarySearchClear: document.getElementById('library-search-clear'),
         libraryPagination: document.getElementById('library-pagination'),
@@ -1567,7 +1568,7 @@ div.innerHTML = `
             { container: refs.libraryPaginationBottom, info: refs.libraryPaginationBottomInfo, prev: refs.libraryPaginationBottomPrev, next: refs.libraryPaginationBottomNext }
         ];
 
-        const shouldShow = totalVisible > state.libraryPageSize;
+        const shouldShow = state.libraryPageSize !== 0 && totalVisible > state.libraryPageSize;
         sets.forEach(set => {
             if (!set.container) return;
             if (!shouldShow) {
@@ -1626,11 +1627,12 @@ div.innerHTML = `
         }
 
         const totalVisible = sorted.length;
-        const totalPages = Math.max(1, Math.ceil(totalVisible / state.libraryPageSize));
+        const pageSize = state.libraryPageSize === 0 ? totalVisible : state.libraryPageSize;
+        const totalPages = Math.max(1, Math.ceil(totalVisible / pageSize));
         if (state.libraryPage > totalPages) state.libraryPage = totalPages;
         if (state.libraryPage < 1) state.libraryPage = 1;
-        const start = (state.libraryPage - 1) * state.libraryPageSize;
-        const end = start + state.libraryPageSize;
+        const start = state.libraryPageSize === 0 ? 0 : (state.libraryPage - 1) * pageSize;
+        const end = state.libraryPageSize === 0 ? sorted.length : start + pageSize;
         const pageItems = sorted.slice(start, end);
 
         const syncSuffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
@@ -1899,6 +1901,15 @@ div.innerHTML = `
         refs.librarySortSelect.addEventListener('change', (event) => {
             const value = event.target.value || 'title-asc';
             state.librarySort = value;
+            state.libraryPage = 1;
+            renderLibrary();
+        });
+    }
+    if (refs.libraryPageSizeSelect) {
+        refs.libraryPageSizeSelect.value = String(state.libraryPageSize);
+        refs.libraryPageSizeSelect.addEventListener('change', (event) => {
+            const value = parseInt(event.target.value, 10);
+            state.libraryPageSize = Number.isNaN(value) ? 30 : value;
             state.libraryPage = 1;
             renderLibrary();
         });
