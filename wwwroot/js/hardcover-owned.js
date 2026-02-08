@@ -28,7 +28,7 @@
     let sortKey = 'title-asc';
     let currentPage = 1;
     const PAGE_SIZE = 10;
-    const AUTO_PAGE_INTERVAL_MS = 10_000;
+    const AUTO_PAGE_INTERVAL_MS = 0; // disable auto paging (manual only)
     let autoPageTimer = null;
     let loaded = false;
     let loading = false;
@@ -188,7 +188,7 @@
 
     function restartAutoPaging(totalPages) {
         stopAutoPaging();
-        if (totalPages <= 1) return;
+        if (AUTO_PAGE_INTERVAL_MS <= 0 || totalPages <= 1) return;
         autoPageTimer = setTimeout(() => {
             currentPage = currentPage >= totalPages ? 1 : currentPage + 1;
             renderBooks();

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Bookworm")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f01340c50ee01f96867846a91217e5937c010f20")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f47da208021c78ea557b7b85b07767f5d8282b09")]
 [assembly: System.Reflection.AssemblyProductAttribute("Bookworm")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Bookworm")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
