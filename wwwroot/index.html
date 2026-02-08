@@ -394,6 +394,12 @@
                         <p>Suggestions you marked as not wanted.</p>
                     </div>
                     <div class="section-actions">
+                        <select id="suggested-ignored-sort" class="select-sort">
+                            <option value="title-asc">Title A–Z</option>
+                            <option value="title-desc">Title Z–A</option>
+                            <option value="author-asc">Author A–Z</option>
+                            <option value="author-desc">Author Z–A</option>
+                        </select>
                         <select id="suggested-ignored-page-size" class="select-sort">
                             <option value="30">30 / page</option>
                             <option value="60">60 / page</option>
@@ -401,6 +407,10 @@
                             <option value="150">150 / page</option>
                             <option value="0">Show all</option>
                         </select>
+                        <div class="suggested-search">
+                            <input id="suggested-ignored-search-input" type="text" placeholder="Search ignored (title, author, genre)" />
+                            <button id="suggested-ignored-search-clear" class="btn btn-ghost" title="Clear search">×</button>
+                        </div>
                     </div>
                 </div>
 
