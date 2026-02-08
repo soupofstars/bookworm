@@ -154,8 +154,8 @@
         })();
 
         statusEl.textContent = normalizedQuery
-            ? `Showing ${pageItems.length} of ${visible.length} match(es) in ${listLabel} (page ${currentPage} of ${totalPages}).`
-            : `Showing ${pageItems.length} of ${total} book(s) in ${listLabel} (page ${currentPage} of ${totalPages}).`;
+            ? `${visible.length} match(es) in ${listLabel}. Page ${currentPage} of ${totalPages}.`
+            : `${total} book(s) in ${listLabel}. Page ${currentPage} of ${totalPages}.`;
 
         updatePaginationUI(totalVisible, totalPages, pageItems.length);
         restartAutoPaging(totalPages);
@@ -172,7 +172,7 @@
 
             bar.el.classList.remove('hidden');
             if (bar.info) {
-                bar.info.textContent = `Page ${currentPage} of ${totalPages} · Showing ${showingCount} of ${totalVisible}`;
+                bar.info.textContent = `Page ${currentPage} of ${totalPages}`;
             }
             if (bar.prev) bar.prev.disabled = currentPage <= 1;
             if (bar.next) bar.next.disabled = currentPage >= totalPages;
