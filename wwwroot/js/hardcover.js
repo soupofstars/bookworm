@@ -15,6 +15,15 @@
     const searchInput = document.getElementById('hardcover-search-input');
     const searchClear = document.getElementById('hardcover-search-clear');
     const sortSelect = document.getElementById('hardcover-sort');
+    const pageSizeSelect = document.getElementById('hardcover-page-size');
+    const pagination = document.getElementById('hardcover-pagination');
+    const paginationInfo = document.getElementById('hardcover-pagination-info');
+    const paginationPrev = document.getElementById('hardcover-pagination-prev');
+    const paginationNext = document.getElementById('hardcover-pagination-next');
+    const paginationBottom = document.getElementById('hardcover-pagination-bottom');
+    const paginationBottomInfo = document.getElementById('hardcover-pagination-bottom-info');
+    const paginationBottomPrev = document.getElementById('hardcover-pagination-bottom-prev');
+    const paginationBottomNext = document.getElementById('hardcover-pagination-bottom-next');
     let loaded = false;
     let loading = false;
     let cachedBooks = [];
@@ -25,6 +34,8 @@
     let wantState = null;
     let searchQuery = '';
     let sortKey = 'title-asc';
+    let page = 1;
+    let pageSize = 30;
     const searchCache = new WeakMap();
     const isbnCache = new WeakMap();
 
@@ -376,6 +387,25 @@
         }
     }
 
+    function updatePaginationUI(totalVisible, totalPages, showingCount) {
+        const sets = [
+            { container: pagination, info: paginationInfo, prev: paginationPrev, next: paginationNext },
+            { container: paginationBottom, info: paginationBottomInfo, prev: paginationBottomPrev, next: paginationBottomNext }
+        ];
+        const shouldShow = pageSize !== 0 && totalVisible > pageSize;
+        sets.forEach(set => {
+            if (!set?.container) return;
+            if (!shouldShow) {
+                set.container.classList.add('hidden');
+                return;
+            }
+            set.container.classList.remove('hidden');
+            if (set.info) set.info.textContent = `Page ${page} of ${totalPages}`;
+            if (set.prev) set.prev.disabled = page <= 1;
+            if (set.next) set.next.disabled = page >= totalPages;
+        });
+    }
+
     function renderBooks() {
         resultsEl.innerHTML = '';
         const total = cachedBooks.length;
@@ -402,7 +432,15 @@
             return;
         }
 
-        sorted.forEach(book => {
+        const effectivePageSize = pageSize === 0 ? sorted.length : pageSize;
+        const totalPages = Math.max(1, Math.ceil(sorted.length / effectivePageSize));
+        if (page > totalPages) page = totalPages;
+        if (page < 1) page = 1;
+        const start = pageSize === 0 ? 0 : (page - 1) * effectivePageSize;
+        const end = pageSize === 0 ? sorted.length : start + effectivePageSize;
+        const pageItems = sorted.slice(start, end);
+
+        pageItems.forEach(book => {
             resultsEl.appendChild(app.createBookCard(book, {
                 showWanted: false,
                 showAddToLibrary: false,
@@ -413,9 +451,11 @@
             }));
         });
 
-        statusEl.textContent = normalizedQuery
-            ? `Showing ${sorted.length} of ${total} “want to read” book(s) on Hardcover.`
-            : `You have ${total} “want to read” book(s) on Hardcover.`;
+        const base = normalizedQuery
+            ? `${sorted.length} match(es) on Hardcover.`
+            : `${total} “want to read” book(s) on Hardcover.`;
+        statusEl.textContent = base;
+        updatePaginationUI(sorted.length, totalPages, pageItems.length);
         updateMismatchNotice();
     }
 
@@ -598,6 +638,7 @@
                     statusEl.textContent = message;
                     loaded = true;
                     if (hasCache) {
+                        page = 1;
                         renderBooks();
                         statusEl.textContent = message;
                     }
@@ -644,6 +685,7 @@
                 }
 
                 loaded = true;
+                page = 1;
                 renderBooks();
 
                 if (typeof app.handleHardcoverWantedBooks === 'function') {
@@ -666,6 +708,7 @@
                 if (!cachedBooks.length && cachedFromDb.length) {
                     cachedBooks = cachedFromDb.slice();
                     loaded = true;
+                    page = 1;
                     renderBooks();
                     statusEl.textContent = fallback;
                 }
@@ -690,6 +733,7 @@
             if (!cachedBooks.length) {
                 cachedBooks = cachedFromDb.slice();
                 loaded = true;
+                page = 1;
                 renderBooks();
                 updateMismatchNotice();
             }
@@ -718,6 +762,7 @@
     if (searchInput) {
         searchInput.addEventListener('input', (event) => {
             searchQuery = event.target.value || '';
+            page = 1;
             renderBooks();
         });
     }
@@ -725,6 +770,7 @@
         searchClear.addEventListener('click', () => {
             searchInput.value = '';
             searchQuery = '';
+            page = 1;
             renderBooks();
             searchInput.focus();
         });
@@ -733,9 +779,35 @@
         sortSelect.value = sortKey;
         sortSelect.addEventListener('change', (event) => {
             sortKey = event.target.value || 'title-asc';
+            page = 1;
             renderBooks();
         });
     }
+    if (pageSizeSelect) {
+        pageSizeSelect.value = String(pageSize);
+        pageSizeSelect.addEventListener('change', (event) => {
+            const value = parseInt(event.target.value, 10);
+            pageSize = Number.isNaN(value) ? 30 : value;
+            page = 1;
+            renderBooks();
+        });
+    }
+    [paginationPrev, paginationBottomPrev].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            if (page > 1) {
+                page -= 1;
+                renderBooks();
+            }
+        });
+    });
+    [paginationNext, paginationBottomNext].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            page += 1;
+            renderBooks();
+        });
+    });
     if (mismatchToggle && mismatchListEl) {
         mismatchToggle.addEventListener('click', () => {
             const isHidden = mismatchListEl.classList.contains('hidden');
