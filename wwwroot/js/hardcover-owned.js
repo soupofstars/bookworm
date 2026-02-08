@@ -7,6 +7,7 @@
     const searchInput = document.getElementById('hardcover-owned-search-input');
     const searchClear = document.getElementById('hardcover-owned-search-clear');
     const sortSelect = document.getElementById('hardcover-owned-sort');
+    const pageSizeSelect = document.getElementById('hardcover-owned-page-size');
     const paginationBars = [
         {
             el: document.getElementById('hardcover-owned-pagination'),
@@ -27,7 +28,7 @@
     let searchQuery = '';
     let sortKey = 'title-asc';
     let currentPage = 1;
-    const PAGE_SIZE = 10;
+    let pageSize = 30;
     const AUTO_PAGE_INTERVAL_MS = 0; // disable auto paging (manual only)
     let autoPageTimer = null;
     let loaded = false;
@@ -134,12 +135,13 @@
         }
 
         const totalVisible = sorted.length;
-        const totalPages = Math.max(1, Math.ceil(totalVisible / PAGE_SIZE));
+        const effectivePageSize = pageSize === 0 ? totalVisible : pageSize;
+        const totalPages = Math.max(1, Math.ceil(totalVisible / effectivePageSize));
         if (currentPage > totalPages) currentPage = totalPages;
         if (currentPage < 1) currentPage = 1;
 
-        const start = (currentPage - 1) * PAGE_SIZE;
-        const end = start + PAGE_SIZE;
+        const start = pageSize === 0 ? 0 : (currentPage - 1) * effectivePageSize;
+        const end = pageSize === 0 ? sorted.length : start + effectivePageSize;
         const pageItems = sorted.slice(start, end);
 
         pageItems.forEach(book => {
@@ -162,7 +164,7 @@
     }
 
     function updatePaginationUI(totalVisible, totalPages, showingCount) {
-        const shouldShow = totalVisible > PAGE_SIZE;
+        const shouldShow = pageSize !== 0 && totalVisible > pageSize;
         paginationBars.forEach(bar => {
             if (!bar?.el) return;
             if (!shouldShow) {
@@ -313,6 +315,15 @@
         sortSelect.value = sortKey;
         sortSelect.addEventListener('change', (event) => {
             sortKey = event.target.value || 'title-asc';
+            currentPage = 1;
+            renderBooks();
+        });
+    }
+    if (pageSizeSelect) {
+        pageSizeSelect.value = String(pageSize);
+        pageSizeSelect.addEventListener('change', (event) => {
+            const value = parseInt(event.target.value, 10);
+            pageSize = Number.isNaN(value) ? 30 : value;
             currentPage = 1;
             renderBooks();
         });
