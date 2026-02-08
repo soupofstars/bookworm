@@ -1578,7 +1578,7 @@ div.innerHTML = `
 
             set.container.classList.remove('hidden');
             if (set.info) {
-                set.info.textContent = `Page ${state.libraryPage} of ${totalPages} · Showing ${showingCount} of ${totalVisible}`;
+                set.info.textContent = `Page ${state.libraryPage} of ${totalPages}`;
             }
             if (set.prev) set.prev.disabled = state.libraryPage <= 1;
             if (set.next) set.next.disabled = state.libraryPage >= totalPages;
@@ -1637,9 +1637,9 @@ div.innerHTML = `
 
         const syncSuffix = state.librarySyncText ? ` ${state.librarySyncText}` : '';
         const baseStatus = rawQuery
-            ? `Showing ${pageItems.length} of ${totalVisible} match(es).${syncSuffix}`
-            : `Showing ${pageItems.length} of ${totalVisible} book(s).${syncSuffix}`;
-        libraryStatus.textContent = `${baseStatus} Page ${state.libraryPage} of ${totalPages}.`;
+            ? `${totalVisible} match(es).${syncSuffix}`
+            : `${totalVisible} book(s).${syncSuffix}`;
+        libraryStatus.textContent = baseStatus.trim();
         updateLibraryPaginationUI(totalVisible, totalPages, pageItems.length);
 
         pageItems.forEach(book => {
