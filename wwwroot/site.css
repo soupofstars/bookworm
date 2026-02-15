@@ -754,6 +754,9 @@ body {
     font-size: 0.55rem;
     color: #f9fafb;
 }
+.book-pill .isbn-link {
+    font-size: 0.7rem;
+}
 .book-pill--nolabel {
     justify-content: center;
     text-align: center;
@@ -872,12 +875,19 @@ body {
     align-items: center;
     gap: 0.1rem;
 }
-.author-link,
-.isbn-link {
+.author-link {
     background: none;
     border: none;
     color: #ffffff;
     font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0;
+}
+.isbn-link {
+    background: none;
+    border: none;
+    color: #ffffff;
+    font-size: 0.7rem;
     cursor: pointer;
     padding: 0;
 }
@@ -1296,15 +1306,16 @@ body {
     padding: 0.2rem 0.55rem;
 }
 .hc-status {
-    display: inline-block;
-    padding: 0.1rem 0.55rem;
-    border-radius: 999px;
-    font-weight: 700;
-    font-size: 0.78rem;
+    display: inline;
+    padding: 0;
+    border-radius: 0;
+    font-weight: 600;
+    font-size: 0.72rem;
+    margin-left: 0;
 }
 .hc-status-neutral {
-    background: rgba(255,255,255,0.08);
-    color: var(--text);
+    background: none;
+    color: #cdd2e0;
 }
 @media (max-width: 1100px) {
     .log-row {

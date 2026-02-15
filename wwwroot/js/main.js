@@ -394,9 +394,9 @@
     function renderHardcoverStatus(book) {
         const hardcoverId = book?.hardcoverId ?? book?.hardcover_id;
         if (hardcoverId) {
-            return `<span class="hc-status hc-status-neutral">Synced to Hardcover</span>`;
+            return `<span class="hc-status hc-status-neutral">Synced</span>`;
         }
-        return `<span class="hc-status hc-status-neutral">Not on Hardcover</span>`;
+        return `<span class="hc-status hc-status-neutral">Not synced</span>`;
     }
 
     function createBookCard(book, options) {
@@ -543,6 +543,9 @@
         const isbnValue = isbnDisplay && isbnDisplay !== 'N/A'
             ? `<button class="isbn-link" data-isbn="${isbnDisplay.replace(/"/g, '&quot;')}">${isbnDisplay}</button>`
             : isbnDisplay;
+        const isbnValueForPill = isbnDisplay && isbnDisplay !== 'N/A'
+            ? (opts.enableSearchLinks ? isbnValue : escapeHtml(isbnDisplay))
+            : 'N/A';
         const nonCalibreIsbnLine = (!isCalibre && !opts.useWantedLayout && opts.showIsbnInline && isbnDisplay && isbnDisplay !== 'N/A')
             ? `
                 <div class="book-info-label book-isbn-label">ISBN</div>
@@ -566,18 +569,16 @@
                 return [{ label: 'Source:', value: formatSourceValue(book, detailsUrl) }];
             }
             if (isCalibre) {
-                const publisher = book.publisher ? escapeHtml(book.publisher) : 'Unknown';
-                if (opts.showHardcoverStatus) {
-                    return [
-                        { label: 'Publisher:', value: publisher },
-                        { label: '', value: renderHardcoverStatus(book) }
-                    ];
-                }
                 const series = book.series ? escapeHtml(book.series) : 'Standalone';
-                return [
-                    { label: 'Publisher:', value: publisher },
-                    { label: 'Series:', value: series }
+                const pills = [
+                    { label: 'ISBN:', value: isbnValueForPill }
                 ];
+                if (opts.showHardcoverStatus) {
+                    pills.push({ label: 'Hardcover:', value: renderHardcoverStatus(book) });
+                } else {
+                    pills.push({ label: 'Series:', value: series });
+                }
+                return pills;
             }
             if (opts.sourceInRightPill) {
                 return [{ label: 'Source:', value: formatSourceValue(book, detailsUrl) }];
@@ -635,7 +636,7 @@
         const authorsMarkup = isCalibre && !opts.enableSearchLinks
             ? renderAuthorPlain(authorNames)
             : renderAuthorLinks(authorNames);
-        const calibreIsbnLine = (isCalibre && isbnDisplay && isbnDisplay !== 'N/A')
+        const calibreIsbnLine = (isCalibre && opts.showIsbnInline && isbnDisplay && isbnDisplay !== 'N/A')
             ? `
                 <div class="book-info-label book-isbn-label">ISBN</div>
                 <div class="book-isbn-inline isbn-inline">${opts.enableSearchLinks ? isbnValue : escapeHtml(isbnDisplay)}</div>
